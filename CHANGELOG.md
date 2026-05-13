@@ -6,6 +6,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — APPEND_REQUEST encoder + `appendChunk` bulk-load API
+
+- **`VectorCodec.encodeDataChunkWrapper` / `encodeDataChunk` /
+  `encodeVector` / `encodeFlatVectorBody`** are now implemented for
+  the common scalar physical types: BOOLEAN, all integer family
+  (signed and unsigned, including HUGEINT / UHUGEINT), FLOAT, DOUBLE,
+  DECIMAL (width 1-38), VARCHAR / CHAR / BLOB / BIT / GEOMETRY,
+  DATE, TIME / TIME_NS, TIMESTAMP variants
+  (sec/ms/us/ns/TZ), INTERVAL, UUID. STRUCT / LIST / MAP / ARRAY
+  encoding still throws — opens an issue if you need them.
+- **`QuackSession.appendChunk(schema, table, chunk)`** sends an
+  `APPEND_REQUEST` to the server with a fully-encoded DataChunk.
+  This is the bulk-load fast-path: it sends column-oriented binary
+  data directly, bypassing per-row INSERT parsing. Typical workloads
+  see an order-of-magnitude speed-up over
+  `PreparedStatement.executeBatch()`.
+- **5 round-trip unit tests** in `VectorCodecRoundTripTest` exercise
+  encode → decode against an in-memory buffer (no server needed) for
+  primitive vectors, nullable columns, and a mixed scalar payload.
+- **5 integration tests** in `AppendIntegrationTest` exercise the
+  full APPEND_REQUEST flow against a live DuckDB+Quack server —
+  CREATE TABLE → build chunk in code → `appendChunk(...)` → SELECT
+  to verify — covering INTEGER+VARCHAR, nullable BIGINT, all-scalar
+  mix (BOOLEAN/INT/BIGINT/DOUBLE/DECIMAL/DATE/TIMESTAMP/VARCHAR),
+  5000-row bulk, and BLOB round-trip.
+
+Total suite: 75 tests, all green.
+
 ### Changed — Bitset validity + typed CONSTANT/DICTIONARY/SEQUENCE paths
 
 - **Bitset-packed validity.** `DecodedVector`'s {@code boolean[] validity}

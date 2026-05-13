@@ -676,6 +676,8 @@ public final class VectorCodec {
         return entries;
     }
 
+    // ---- encoder ----
+
     public static void encodeDataChunkWrapper(BinaryWriter writer, DataChunk chunk) {
         writer.writeObject(obj -> obj.writeField(300, () -> encodeDataChunk(obj, chunk)));
     }
@@ -684,13 +686,211 @@ public final class VectorCodec {
         if (chunk.types().size() != chunk.columns().size()) {
             throw new QuackProtocolException("DataChunk type count must match column count");
         }
+        for (int i = 0; i < chunk.columns().size(); i++) {
+            if (chunk.columns().get(i).size() != chunk.rowCount()) {
+                throw new QuackProtocolException(
+                        "Column " + i + " has " + chunk.columns().get(i).size()
+                                + " rows, DataChunk declares " + chunk.rowCount());
+            }
+        }
         writer.writeObject(obj -> {
             obj.writeField(100, () -> obj.writeUleb(chunk.rowCount()));
             obj.writeField(101, () -> obj.writeList(chunk.types(),
                     (t, i) -> LogicalTypeCodec.encode(obj, t)));
-            throw new QuackUnsupportedTypeException(
-                    "Vector encoding is not yet implemented (decoder is); APPEND support is on the roadmap");
+            obj.writeField(102, () -> obj.writeList(chunk.columns(),
+                    (col, i) -> encodeVector(obj, chunk.types().get(i), col)));
         });
+    }
+
+    public static void encodeVector(BinaryWriter writer, LogicalType type, DecodedVector vector) {
+        writer.writeObject(obj -> encodeFlatVectorBody(obj, type, vector));
+    }
+
+    private static void encodeFlatVectorBody(BinaryWriter writer, LogicalType type, DecodedVector vector) {
+        int count = vector.size();
+        long[] validity = extractValidity(vector);
+        boolean hasNulls = validity != null;
+        writer.writeField(100, () -> writer.writeBool(hasNulls));
+        if (hasNulls) {
+            byte[] bytes = Validity.toBytes(validity, count);
+            writer.writeField(101, () -> writer.writeBlob(bytes));
+        }
+        PhysicalType physical = PhysicalTypeUtil.getPhysicalType(type);
+        if (physical.isConstantSize()) {
+            byte[] bytes = encodeFixedBytes(type, physical, vector);
+            writer.writeField(102, () -> writer.writeBlob(bytes));
+            return;
+        }
+        switch (physical) {
+            case VARCHAR -> writer.writeField(102, () -> {
+                writer.writeUleb(count);
+                for (int i = 0; i < count; i++) {
+                    writer.writeStringBytes(encodeStringLikeValueForWrite(type, vector.getObject(i)));
+                }
+            });
+            default -> throw new QuackUnsupportedTypeException(
+                    "Encoding physical type " + physical + " is not yet supported"
+                            + " (open an issue if you need STRUCT/LIST/ARRAY/MAP append)");
+        }
+    }
+
+    private static long[] extractValidity(DecodedVector vector) {
+        if (vector instanceof DecodedVector.BoolVec v) return v.validity();
+        if (vector instanceof DecodedVector.ByteVec v) return v.validity();
+        if (vector instanceof DecodedVector.ShortVec v) return v.validity();
+        if (vector instanceof DecodedVector.IntVec v) return v.validity();
+        if (vector instanceof DecodedVector.LongVec v) return v.validity();
+        if (vector instanceof DecodedVector.FloatVec v) return v.validity();
+        if (vector instanceof DecodedVector.DoubleVec v) return v.validity();
+        if (vector instanceof DecodedVector.ObjectVec ov) {
+            int count = ov.values().length;
+            long[] validity = null;
+            for (int i = 0; i < count; i++) {
+                if (ov.values()[i] == null) {
+                    if (validity == null) validity = Validity.allValid(count);
+                    Validity.setNull(validity, i);
+                }
+            }
+            return validity;
+        }
+        return null;
+    }
+
+    private static byte[] encodeFixedBytes(LogicalType type, PhysicalType physical, DecodedVector vector) {
+        int rows = vector.size();
+        BinaryWriter buf = new BinaryWriter(Math.max(16, physical.byteWidth() * rows));
+        for (int i = 0; i < rows; i++) {
+            Object v = vector.isNull(i) ? null : vector.getObject(i);
+            encodeFixedValueForWrite(buf, type, physical, v);
+        }
+        return buf.toByteArray();
+    }
+
+    private static void encodeFixedValueForWrite(BinaryWriter buf, LogicalType type,
+                                                 PhysicalType physical, Object value) {
+        switch (physical) {
+            case BOOL -> buf.writeFixedUint8(value != null && (Boolean) value ? 1 : 0);
+            case INT8 -> buf.writeFixedInt8(value == null ? 0 : ((Number) value).byteValue());
+            case UINT8 -> buf.writeFixedUint8(encodeEnumOrInt(type, value, 0));
+            case INT16 -> {
+                if (type.id() == LogicalTypeId.DECIMAL) {
+                    buf.writeFixedInt16(value == null ? 0 : decimalUnscaled(type, value).intValueExact());
+                } else {
+                    buf.writeFixedInt16(value == null ? 0 : ((Number) value).shortValue());
+                }
+            }
+            case UINT16 -> buf.writeFixedUint16(encodeEnumOrInt(type, value, 0));
+            case INT32 -> {
+                if (type.id() == LogicalTypeId.DATE) {
+                    buf.writeFixedInt32(value == null ? 0 : (int) ((LocalDate) value).toEpochDay());
+                } else if (type.id() == LogicalTypeId.DECIMAL) {
+                    buf.writeFixedInt32(value == null ? 0 : decimalUnscaled(type, value).intValueExact());
+                } else {
+                    buf.writeFixedInt32(value == null ? 0 : ((Number) value).intValue());
+                }
+            }
+            case UINT32 -> buf.writeFixedUint32(encodeEnumOrLong(type, value, 0L));
+            case INT64 -> buf.writeFixedInt64(encodeInt64LogicalValueForWrite(type, value));
+            case UINT64 -> buf.writeFixedUint64(value == null ? 0L : ((Number) value).longValue());
+            case FLOAT -> buf.writeFixedFloat32(value == null ? 0f : ((Number) value).floatValue());
+            case DOUBLE -> buf.writeFixedFloat64(value == null ? 0d : ((Number) value).doubleValue());
+            case INT128 -> {
+                HugeIntParts parts;
+                if (value == null) {
+                    parts = new HugeIntParts(0L, 0L);
+                } else if (type.id() == LogicalTypeId.UUID) {
+                    parts = uuidToHugeIntParts((UUID) value);
+                } else if (type.id() == LogicalTypeId.DECIMAL) {
+                    parts = HugeIntParts.ofSigned(decimalUnscaled(type, value));
+                } else {
+                    parts = HugeIntParts.ofSigned((BigInteger) value);
+                }
+                buf.writeFixedUint64(parts.lower());
+                buf.writeFixedInt64(parts.upper());
+            }
+            case UINT128 -> {
+                BigInteger v = value == null ? BigInteger.ZERO : (BigInteger) value;
+                BigInteger mask = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
+                long lower = v.and(mask).longValue();
+                long upper = v.shiftRight(64).and(mask).longValue();
+                buf.writeFixedUint64(lower);
+                buf.writeFixedUint64(upper);
+            }
+            case INTERVAL -> {
+                IntervalValue iv = value == null ? new IntervalValue(0, 0, 0L) : (IntervalValue) value;
+                buf.writeFixedInt32(iv.months());
+                buf.writeFixedInt32(iv.days());
+                buf.writeFixedInt64(iv.micros());
+            }
+            default -> throw new QuackUnsupportedTypeException(
+                    "Cannot encode fixed physical type " + physical);
+        }
+    }
+
+    private static long encodeInt64LogicalValueForWrite(LogicalType type, Object value) {
+        if (value == null) return 0L;
+        return switch (type.id()) {
+            case TIME -> ((LocalTime) value).toNanoOfDay() / 1_000L;
+            case TIME_NS -> ((LocalTime) value).toNanoOfDay();
+            case TIMESTAMP_SEC -> ((LocalDateTime) value).toEpochSecond(ZoneOffset.UTC);
+            case TIMESTAMP_MS -> ((LocalDateTime) value).toInstant(ZoneOffset.UTC).toEpochMilli();
+            case TIMESTAMP -> instantToMicros(((LocalDateTime) value).toInstant(ZoneOffset.UTC));
+            case TIMESTAMP_NS -> {
+                Instant inst = ((LocalDateTime) value).toInstant(ZoneOffset.UTC);
+                yield Math.multiplyExact(inst.getEpochSecond(), 1_000_000_000L) + inst.getNano();
+            }
+            case TIMESTAMP_TZ -> instantToMicros(((OffsetDateTime) value).toInstant());
+            case TIME_TZ -> ((Number) value).longValue();
+            case DECIMAL -> decimalUnscaled(type, value).longValueExact();
+            default -> ((Number) value).longValue();
+        };
+    }
+
+    private static long instantToMicros(Instant inst) {
+        return Math.multiplyExact(inst.getEpochSecond(), 1_000_000L) + inst.getNano() / 1_000L;
+    }
+
+    private static int encodeEnumOrInt(LogicalType type, Object value, int defaultValue) {
+        if (value == null) return defaultValue;
+        if (type.id() == LogicalTypeId.ENUM) {
+            List<String> values = PhysicalTypeUtil.getEnumValues(type);
+            int idx = values.indexOf(value.toString());
+            if (idx < 0) throw new QuackProtocolException("Unknown ENUM value: " + value);
+            return idx;
+        }
+        return ((Number) value).intValue();
+    }
+
+    private static long encodeEnumOrLong(LogicalType type, Object value, long defaultValue) {
+        if (value == null) return defaultValue;
+        return encodeEnumOrInt(type, value, 0);
+    }
+
+    private static BigInteger decimalUnscaled(LogicalType type, Object value) {
+        BigDecimal bd;
+        if (value instanceof BigDecimal d) bd = d;
+        else if (value instanceof Number n) bd = BigDecimal.valueOf(n.doubleValue());
+        else if (value instanceof String s) bd = new BigDecimal(s);
+        else throw new QuackProtocolException("Cannot encode " + value + " as DECIMAL");
+        ExtraTypeInfo info = type.typeInfo().orElseThrow(
+                () -> new QuackProtocolException("DECIMAL value is missing DecimalTypeInfo"));
+        if (!(info instanceof ExtraTypeInfo.Decimal d)) {
+            throw new QuackProtocolException("DECIMAL value is missing DecimalTypeInfo");
+        }
+        return bd.setScale(d.scale(), java.math.RoundingMode.HALF_UP).unscaledValue();
+    }
+
+    private static HugeIntParts uuidToHugeIntParts(UUID uuid) {
+        if (uuid == null) return new HugeIntParts(0L, 0L);
+        long displayUpper = uuid.getMostSignificantBits();
+        long upper = displayUpper ^ (1L << 63);
+        return new HugeIntParts(upper, uuid.getLeastSignificantBits());
+    }
+
+    private static byte[] encodeStringLikeValueForWrite(LogicalType type, Object value) {
+        if (value == null) return new byte[0];
+        if (value instanceof byte[] b) return b;
+        return value.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private record ListEntry(int offset, int length) {

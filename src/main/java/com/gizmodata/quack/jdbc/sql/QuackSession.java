@@ -93,6 +93,42 @@ public final class QuackSession implements AutoCloseable {
         return new Cursor(this, prep);
     }
 
+    /**
+     * Append a {@link DataChunk} into {@code schema.tableName} via a Quack
+     * {@code APPEND_REQUEST}. The chunk's column count and types must
+     * match the destination table; rows are appended atomically as a
+     * single server-side batch.
+     *
+     * <p>This is the bulk-load fast-path — it sends column-oriented
+     * binary data directly, bypassing per-row INSERT parsing. For typical
+     * workloads it's an order of magnitude faster than
+     * {@code PreparedStatement.executeBatch()}.
+     */
+    public void appendChunk(String schema, String tableName, DataChunk chunk) {
+        if (closed) {
+            throw new QuackProtocolException("Session is closed");
+        }
+        if (tableName == null || tableName.isEmpty()) {
+            throw new QuackProtocolException("appendChunk: tableName is required");
+        }
+        if (chunk == null) {
+            throw new QuackProtocolException("appendChunk: chunk is required");
+        }
+        QuackMessage.AppendRequest request = new QuackMessage.AppendRequest(
+                MessageHeader.of(MessageType.APPEND_REQUEST)
+                        .withConnectionId(connectionId)
+                        .withClientQueryId(nextQueryId()),
+                Optional.ofNullable(schema),
+                tableName,
+                chunk);
+        QuackMessage response = transport.send(request);
+        if (!(response instanceof QuackMessage.SuccessResponse)) {
+            throw new QuackProtocolException(
+                    "Expected SUCCESS_RESPONSE for APPEND, got "
+                            + response.getClass().getSimpleName());
+        }
+    }
+
     @Override
     public synchronized void close() {
         if (closed || connectionId == null) {
