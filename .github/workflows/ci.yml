@@ -7,6 +7,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write  # required for the github-release job to upload assets
+
 jobs:
   test:
     name: Build & test
@@ -63,3 +66,59 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
         run: mvn --batch-mode --no-transfer-progress -Prelease deploy -DskipTests
+
+  github-release:
+    name: Attach jars to GitHub Release
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Package versioned + sources + javadoc jars
+        run: mvn --batch-mode --no-transfer-progress -Prelease package -DskipTests
+
+      - name: Derive version and copy un-versioned jars
+        id: artifacts
+        run: |
+          set -euo pipefail
+          VERSION=$(mvn --batch-mode --no-transfer-progress \
+                       -q -Dexec.executable=echo -Dexec.args='${project.version}' \
+                       --non-recursive exec:exec)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          mkdir -p release
+          cp "target/quack-jdbc-${VERSION}.jar"          "release/quack-jdbc-${VERSION}.jar"
+          cp "target/quack-jdbc-${VERSION}.jar"          "release/quack-jdbc.jar"
+          if [ -f "target/quack-jdbc-${VERSION}-sources.jar" ]; then
+            cp "target/quack-jdbc-${VERSION}-sources.jar"  "release/quack-jdbc-${VERSION}-sources.jar"
+            cp "target/quack-jdbc-${VERSION}-sources.jar"  "release/quack-jdbc-sources.jar"
+          fi
+          if [ -f "target/quack-jdbc-${VERSION}-javadoc.jar" ]; then
+            cp "target/quack-jdbc-${VERSION}-javadoc.jar"  "release/quack-jdbc-${VERSION}-javadoc.jar"
+            cp "target/quack-jdbc-${VERSION}-javadoc.jar"  "release/quack-jdbc-javadoc.jar"
+          fi
+          (cd release && sha256sum * > SHA256SUMS)
+          ls -la release/
+
+      - name: Create / update GitHub Release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release/quack-jdbc-${{ steps.artifacts.outputs.version }}.jar
+            release/quack-jdbc.jar
+            release/quack-jdbc-${{ steps.artifacts.outputs.version }}-sources.jar
+            release/quack-jdbc-sources.jar
+            release/quack-jdbc-${{ steps.artifacts.outputs.version }}-javadoc.jar
+            release/quack-jdbc-javadoc.jar
+            release/SHA256SUMS
+          fail_on_unmatched_files: false

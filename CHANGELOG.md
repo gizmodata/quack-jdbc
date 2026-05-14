@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Release distribution
+
+- **GitHub Release jars** are now attached to every tagged release by
+  CI, in addition to the versioned artifact going to Maven Central.
+  Each release gets:
+  - `quack-jdbc-<version>.jar` — versioned filename
+  - `quack-jdbc.jar` — un-versioned filename (always the latest), so
+    DBeaver / DataGrip / curl users can fetch a stable URL:
+    `https://github.com/gizmodata/quack-jdbc/releases/latest/download/quack-jdbc.jar`
+  - Matching `*-sources.jar` and `*-javadoc.jar` in both forms
+  - `SHA256SUMS` for every uploaded asset
+- **README badges** added at the top: Maven Central version, latest
+  GitHub release, direct download link to the latest un-versioned jar,
+  link to the GitHub repo, MIT license.
+
 ### Added — APPEND_REQUEST encoder + `appendChunk` bulk-load API
 
 - **`VectorCodec.encodeDataChunkWrapper` / `encodeDataChunk` /
