@@ -6,7 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+(nothing yet)
+
 ## [0.1.0-alpha.1] — 2026-05-13
+
+Published to Maven Central as
+`com.gizmodata:quack-jdbc:0.1.0-alpha.1` and as a GitHub Release with
+both versioned and un-versioned jars at
+<https://github.com/gizmodata/quack-jdbc/releases/tag/v0.1.0-alpha.1>.
+
+
 
 First public alpha release. The Quack protocol itself is in beta until
 DuckDB v2.0 ships in September 2026 — this driver is pinned to
