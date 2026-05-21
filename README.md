@@ -97,8 +97,9 @@ jdbc:quack://host[:port][/database][?token=…&tls=…]
 | `connectTimeout` | 10      | HTTP connect timeout, as seconds or an ISO-8601 duration like `PT5S`.    |
 | `requestTimeout` | 60      | Per-request HTTP timeout, as seconds or an ISO-8601 duration like `PT30S`. |
 
-Connection properties can be set on the URL or via `java.util.Properties`
+`token` and `tls` can be set on the URL or via `java.util.Properties`
 passed to `DriverManager.getConnection`. URL values take precedence.
+The timeout properties follow the same rule.
 
 ### Basic timeout configuration
 
