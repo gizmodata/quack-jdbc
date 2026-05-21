@@ -3,10 +3,13 @@ package com.gizmodata.quack.jdbc.sql;
 import com.gizmodata.quack.jdbc.message.MessageHeader;
 import com.gizmodata.quack.jdbc.message.MessageType;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
+import com.gizmodata.quack.jdbc.transport.QuackHttpTransport;
 import com.gizmodata.quack.jdbc.transport.QuackTransport;
 import com.gizmodata.quack.jdbc.transport.QuackUri;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Constructor;
+import java.net.URI;
 import java.sql.Connection;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
@@ -88,6 +91,18 @@ class QuackDriverCustomTransportTest {
         assertEquals("tls", propertyInfo[1].name);
         assertEquals("connectTimeout", propertyInfo[2].name);
         assertEquals("requestTimeout", propertyInfo[3].name);
+    }
+
+    @Test
+    void sessionKeepsQuackHttpTransportConstructorForBinaryCompatibility() throws Exception {
+        Constructor<QuackSession> constructor = QuackSession.class.getConstructor(
+                QuackUri.class, QuackHttpTransport.class);
+        QuackUri uri = QuackUri.parse("jdbc:quack://example.test:1234");
+        QuackHttpTransport transport = new QuackHttpTransport(URI.create("http://example.test:1234/quack"));
+
+        QuackSession session = constructor.newInstance(uri, transport);
+
+        assertEquals(uri, session.uri());
     }
 
     private static final class RecordingTransport implements QuackTransport {

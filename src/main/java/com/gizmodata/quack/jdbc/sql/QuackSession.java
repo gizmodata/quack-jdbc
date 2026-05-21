@@ -7,6 +7,7 @@ import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.MessageHeader;
 import com.gizmodata.quack.jdbc.message.MessageType;
 import com.gizmodata.quack.jdbc.message.QuackMessage;
+import com.gizmodata.quack.jdbc.transport.QuackHttpTransport;
 import com.gizmodata.quack.jdbc.transport.QuackTransport;
 import com.gizmodata.quack.jdbc.transport.QuackTransportFactory;
 import com.gizmodata.quack.jdbc.transport.QuackUri;
@@ -32,6 +33,10 @@ public final class QuackSession implements AutoCloseable {
     public QuackSession(QuackUri uri, QuackTransport transport) {
         this.uri = Objects.requireNonNull(uri, "uri");
         this.transport = Objects.requireNonNull(transport, "transport");
+    }
+
+    public QuackSession(QuackUri uri, QuackHttpTransport transport) {
+        this(uri, (QuackTransport) transport);
     }
 
     public static QuackSession connect(QuackUri uri) {
