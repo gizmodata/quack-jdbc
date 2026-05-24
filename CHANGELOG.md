@@ -8,7 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 (nothing yet)
 
-## [0.2.0-alpha.2] — 2026-05-24
+## [0.2.0-alpha.3] — 2026-05-24
+
+Supersedes the never-published `v0.2.0-alpha.2` tag (Maven Central
+rejected the re-publish after the original tag's deploy was cancelled
+mid-flight). Content is identical to what alpha.2 would have shipped,
+plus contributor credit in the `[0.2.0-alpha.1]` notes below.
 
 ### Changed
 - Integration tests now `INSTALL quack;` from the **core** repository,
@@ -22,6 +27,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for users on older builds.
 
 ## [0.2.0-alpha.1] — 2026-05-24
+
+Thanks to **[@mwieczorkiewicz](https://github.com/mwieczorkiewicz)**
+(Mikołaj Wieczorkiewicz) for contributing the pluggable transport SPI
+and configurable HTTP timeouts in [#1](https://github.com/gizmodata/quack-jdbc/pull/1)
+— their first contribution to the project.
 
 ### Added — Pluggable transport SPI (#1)
 
