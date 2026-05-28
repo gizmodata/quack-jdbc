@@ -29,12 +29,15 @@ import java.util.Optional;
  * returns the decoded server response (or raises a
  * {@link QuackServerException} for {@code ERROR_RESPONSE}).
  *
- * <p>When the endpoint host is a hostname (not a literal IP), every
- * address returned by {@link InetAddress#getAllByName(String)} is tried
- * in order. This is essential for hosts like {@code localhost} that
- * resolve to both IPv4 and IPv6 — JDK {@link HttpClient} otherwise gives
- * up after the first address fails, even if a server is reachable on
- * one of the other addresses.
+ * <p>For plain HTTP endpoints, every address returned by
+ * {@link InetAddress#getAllByName(String)} is tried in order. This is
+ * essential for hosts like {@code localhost} that resolve to both IPv4
+ * and IPv6 — JDK {@link HttpClient} otherwise gives up after the first
+ * address fails, even if a server is reachable on one of the other
+ * addresses.
+ *
+ * <p>HTTPS endpoints keep the original hostname. Replacing the URI host
+ * with a resolved IP address breaks TLS SNI and hostname verification.
  */
 public final class QuackHttpTransport implements QuackTransport {
 
@@ -77,10 +80,9 @@ public final class QuackHttpTransport implements QuackTransport {
     public QuackMessage send(QuackMessage request) {
         byte[] body = MessageCodec.encode(request);
 
-        InetAddress[] addresses = resolveCandidates();
+        URI[] attempts = endpointCandidates();
         IOException lastFailure = null;
-        for (int i = 0; i < addresses.length; i++) {
-            URI attempt = endpointFor(addresses[i]);
+        for (URI attempt : attempts) {
             HttpRequest httpRequest = HttpRequest.newBuilder(attempt)
                     .timeout(requestTimeout)
                     .header("Content-Type", QuackConstants.DUCKDB_MIME_TYPE)
@@ -112,7 +114,19 @@ public final class QuackHttpTransport implements QuackTransport {
             return decoded;
         }
 
-        throw new QuackException(buildExhaustedMessage(addresses, lastFailure), lastFailure);
+        throw new QuackException(buildExhaustedMessage(attempts, lastFailure), lastFailure);
+    }
+
+    URI[] endpointCandidates() {
+        if ("https".equalsIgnoreCase(endpoint.getScheme())) {
+            return new URI[]{endpoint};
+        }
+        InetAddress[] addresses = resolveCandidates();
+        URI[] endpoints = new URI[addresses.length];
+        for (int i = 0; i < addresses.length; i++) {
+            endpoints[i] = endpointFor(addresses[i]);
+        }
+        return endpoints;
     }
 
     private InetAddress[] resolveCandidates() {
@@ -147,13 +161,13 @@ public final class QuackHttpTransport implements QuackTransport {
         return "Quack HTTP request to " + attempted + " failed: " + detail;
     }
 
-    private String buildExhaustedMessage(InetAddress[] addresses, Throwable cause) {
+    private String buildExhaustedMessage(URI[] attempts, Throwable cause) {
         StringBuilder sb = new StringBuilder("Quack HTTP connect failed for ")
                 .append(endpoint.getHost()).append(":").append(endpoint.getPort())
-                .append(" (tried ").append(addresses.length).append(" address(es): ");
-        for (int i = 0; i < addresses.length; i++) {
+                .append(" (tried ").append(attempts.length).append(" endpoint(s): ");
+        for (int i = 0; i < attempts.length; i++) {
             if (i > 0) sb.append(", ");
-            sb.append(addresses[i].getHostAddress());
+            sb.append(attempts[i]);
         }
         sb.append(")");
         if (cause != null) {

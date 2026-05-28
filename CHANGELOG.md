@@ -6,7 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(nothing yet)
+### Fixed
+
+- HTTPS transport now keeps the original hostname in request URIs instead
+  of replacing it with a resolved IP address. This preserves TLS SNI and
+  certificate hostname verification for gateways and load balancers that
+  route by hostname. Plain HTTP endpoints still expand to resolved address
+  candidates for the existing localhost IPv4/IPv6 fallback behavior.
 
 ## [0.2.0-alpha.3] — 2026-05-24
 

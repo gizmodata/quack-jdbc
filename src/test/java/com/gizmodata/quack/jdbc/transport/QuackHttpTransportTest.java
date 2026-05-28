@@ -17,6 +17,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -151,5 +152,29 @@ class QuackHttpTransportTest {
 
         assertEquals(Duration.ofSeconds(3), transport.connectTimeout().orElseThrow());
         assertEquals(Duration.ofSeconds(9), transport.requestTimeout());
+    }
+
+    @Test
+    void httpsEndpointKeepsOriginalHostnameForSniAndCertificateVerification() {
+        URI endpoint = URI.create("https://localhost:9494/quack");
+        QuackHttpTransport transport = transportWith(endpoint);
+
+        URI[] endpoints = transport.endpointCandidates();
+
+        assertEquals(1, endpoints.length);
+        assertEquals(endpoint, endpoints[0]);
+    }
+
+    @Test
+    void httpEndpointStillExpandsToResolvedAddressCandidates() {
+        URI endpoint = URI.create("http://localhost:9494/quack");
+        QuackHttpTransport transport = transportWith(endpoint);
+
+        URI[] endpoints = transport.endpointCandidates();
+
+        assertTrue(endpoints.length >= 1);
+        assertTrue(Arrays.stream(endpoints).allMatch(uri -> uri.getHost() != null));
+        assertTrue(Arrays.stream(endpoints).noneMatch(endpoint::equals),
+                "plain HTTP endpoint should still be rewritten to resolved address candidates");
     }
 }
