@@ -82,10 +82,7 @@ public record QuackUri(String host,
         }
 
         boolean tls = parseBool(params.getOrDefault("tls", params.getOrDefault("useEncryption", "false")));
-        Optional<String> token = Optional.ofNullable(params.get("token"));
-        if (token.isEmpty()) {
-            token = Optional.ofNullable(params.get("password"));
-        }
+        Optional<String> token = QuackTokenResolver.resolve(params);
 
         return new QuackUri(host, port, database, tls, token, params);
     }

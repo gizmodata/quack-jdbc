@@ -88,9 +88,12 @@ class QuackDriverCustomTransportTest {
                 new Properties());
 
         assertEquals("token", propertyInfo[0].name);
-        assertEquals("tls", propertyInfo[1].name);
-        assertEquals("connectTimeout", propertyInfo[2].name);
-        assertEquals("requestTimeout", propertyInfo[3].name);
+        assertEquals("password", propertyInfo[1].name);
+        assertEquals("tokenEnv", propertyInfo[2].name);
+        assertEquals("tokenFile", propertyInfo[3].name);
+        assertEquals("tls", propertyInfo[4].name);
+        assertEquals("connectTimeout", propertyInfo[5].name);
+        assertEquals("requestTimeout", propertyInfo[6].name);
     }
 
     @Test

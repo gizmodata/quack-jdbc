@@ -6,7 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- Token provider properties for safer shared JDBC configurations:
+  `tokenEnv` and `tokenFile`.
 
 ## [0.2.0-alpha.3] — 2026-05-24
 

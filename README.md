@@ -92,20 +92,24 @@ public class Demo {
 jdbc:quack://host[:port][/database][?token=…&tls=…]
 ```
 
-| Property         | Default | Notes                                                                    |
-|------------------|---------|--------------------------------------------------------------------------|
-| `host`           | —       | Required.                                                                |
-| `port`           | 9494    | Default Quack port.                                                      |
-| `database`       | (none)  | Reserved; passed through to the server when provided.                    |
-| `token`          | (none)  | Authentication token. Also accepted via JDBC `Properties` as `token`.    |
-| `tls`            | false   | `true` → use `https://` for the underlying HTTP transport.               |
-| `useEncryption`  | false   | Alias for `tls` (matches the gizmosql-jdbc-driver convention).           |
-| `connectTimeout` | 10      | HTTP connect timeout, as seconds or an ISO-8601 duration like `PT5S`.    |
-| `requestTimeout` | 60      | Per-request HTTP timeout, as seconds or an ISO-8601 duration like `PT30S`. |
+| Property             | Default | Notes                                                                    |
+|----------------------|---------|--------------------------------------------------------------------------|
+| `host`               | —       | Required.                                                                |
+| `port`               | 9494    | Default Quack port.                                                      |
+| `database`           | (none)  | Reserved; passed through to the server when provided.                    |
+| `token`              | (none)  | Authentication token. Prefer an indirect token source for shared configs. |
+| `password`           | (none)  | Alias for `token`, useful for tools that expose a password field.         |
+| `tokenEnv`           | (none)  | Environment variable containing the authentication token.                 |
+| `tokenFile`          | (none)  | Local file containing the authentication token.                           |
+| `tls`                | false   | `true` → use `https://` for the underlying HTTP transport.                |
+| `useEncryption`      | false   | Alias for `tls` (matches the gizmosql-jdbc-driver convention).            |
+| `connectTimeout`     | 10      | HTTP connect timeout, as seconds or an ISO-8601 duration like `PT5S`.     |
+| `requestTimeout`     | 60      | Per-request HTTP timeout, as seconds or an ISO-8601 duration like `PT30S`. |
 
-`token` and `tls` can be set on the URL or via `java.util.Properties`
-passed to `DriverManager.getConnection`. URL values take precedence.
-The timeout properties follow the same rule.
+These options can be set on the URL or via `java.util.Properties` passed
+to `DriverManager.getConnection`. URL values take precedence. Token
+resolution checks `token`, then `password`, then `tokenEnv`, then
+`tokenFile`.
 
 ### Basic timeout configuration
 
@@ -131,6 +135,28 @@ try (Connection conn = DriverManager.getConnection("jdbc:quack://127.0.0.1:9494"
     // use the connection normally
 }
 ```
+
+### Safer token configuration
+
+For desktop tools such as DataGrip, avoid putting `token=...` directly
+in the JDBC URL. URLs and plain driver properties are easy to copy, log,
+or commit by accident.
+
+Prefer `tokenFile` or `tokenEnv` for shared desktop-tool configurations:
+
+```text
+tokenFile=/Users/alice/.config/quack/prod.token
+```
+
+or:
+
+```text
+tokenEnv=QUACK_TOKEN
+```
+
+The token is read at connection time and used for the connection
+handshake, but the token itself does not need to be stored in the data
+source.
 
 ### Fully custom HTTP transport
 
@@ -178,7 +204,9 @@ Register the driver in **DBeaver → Database → Driver Manager**:
 | Default Port          | `9494`                                               |
 | Driver Files          | `quack-jdbc-<version>.jar`                          |
 
-Add `token` as a connection property (or include `?token=…` on the URL).
+Add `tokenFile` or `tokenEnv` as connection properties for safer shared
+configuration. For quick local testing, `token` and `password` are also
+supported.
 
 ## Building from source
 

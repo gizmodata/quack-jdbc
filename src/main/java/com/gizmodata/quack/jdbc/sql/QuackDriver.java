@@ -52,8 +52,23 @@ public final class QuackDriver implements Driver {
     @Override
     public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) {
         DriverPropertyInfo token = new DriverPropertyInfo("token", info != null ? info.getProperty("token") : null);
-        token.description = "Quack authentication token (overrides any 'token' query parameter on the URL).";
+        token.description = "Quack authentication token. Prefer tokenEnv or tokenFile for shared configs.";
         token.required = false;
+
+        DriverPropertyInfo password = new DriverPropertyInfo("password",
+                info != null ? info.getProperty("password") : null);
+        password.description = "Quack authentication token alias for tools that provide a password field.";
+        password.required = false;
+
+        DriverPropertyInfo tokenEnv = new DriverPropertyInfo("tokenEnv",
+                info != null ? info.getProperty("tokenEnv") : null);
+        tokenEnv.description = "Environment variable containing the Quack authentication token.";
+        tokenEnv.required = false;
+
+        DriverPropertyInfo tokenFile = new DriverPropertyInfo("tokenFile",
+                info != null ? info.getProperty("tokenFile") : null);
+        tokenFile.description = "Path to a local file containing the Quack authentication token.";
+        tokenFile.required = false;
 
         DriverPropertyInfo tls = new DriverPropertyInfo("tls", info != null ? info.getProperty("tls", "false") : "false");
         tls.description = "Use HTTPS for the Quack transport (default: false).";
@@ -70,7 +85,9 @@ public final class QuackDriver implements Driver {
         requestTimeout.description = "Per-request HTTP timeout as seconds or ISO-8601 duration (default: 60 seconds).";
         requestTimeout.required = false;
 
-        return new DriverPropertyInfo[]{token, tls, connectTimeout, requestTimeout};
+        return new DriverPropertyInfo[]{
+                token, password, tokenEnv, tokenFile, tls, connectTimeout, requestTimeout
+        };
     }
 
     @Override

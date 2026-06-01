@@ -49,6 +49,14 @@ class QuackUriTest {
     }
 
     @Test
+    void acceptsPasswordAsTokenAlias() {
+        Properties props = new Properties();
+        props.setProperty("password", "from-password");
+        QuackUri u = QuackUri.parse("jdbc:quack://h:9494", props);
+        assertEquals("from-password", u.token().orElseThrow());
+    }
+
+    @Test
     void tlsFlagTogglesScheme() {
         QuackUri u = QuackUri.parse("jdbc:quack://h:9494?tls=false");
         assertEquals("http://h:9494/quack", u.httpUri().toString());
