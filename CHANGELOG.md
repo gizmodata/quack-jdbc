@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Token provider properties for safer shared JDBC configurations:
+  `tokenEnv` and `tokenFile`.
+
 ### Fixed
 
 - HTTPS transport now keeps the original hostname in request URIs instead
