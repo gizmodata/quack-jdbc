@@ -22,6 +22,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Struct;
+import java.sql.Types;
 import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -229,6 +230,24 @@ public class JdbcCoverageIntegrationTest {
     }
 
     // ---- ResultSet ----
+
+    @Test
+    void resultSetMetaDataReportsArrayElementType() throws Exception {
+        try (Connection c = connect();
+             Statement s = c.createStatement()) {
+            try (ResultSet rs = s.executeQuery("SELECT [10, 20, 30]::INTEGER[] AS a")) {
+                ResultSetMetaData md = rs.getMetaData();
+                assertEquals(Types.ARRAY, md.getColumnType(1));
+                assertEquals("INTEGER[]", md.getColumnTypeName(1));
+            }
+            try (ResultSet rs = s.executeQuery("SELECT list(x) AS a FROM (VALUES (1),(2),(3)) t(x)")) {
+                assertEquals("INTEGER[]", rs.getMetaData().getColumnTypeName(1));
+            }
+            try (ResultSet rs = s.executeQuery("SELECT [1.5, 2.5]::DOUBLE[2] AS a")) {
+                assertEquals("DOUBLE[2]", rs.getMetaData().getColumnTypeName(1));
+            }
+        }
+    }
 
     @Test
     void resultSetGetArrayReturnsJdbcArray() throws Exception {

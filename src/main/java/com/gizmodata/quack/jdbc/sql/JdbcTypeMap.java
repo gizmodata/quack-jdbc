@@ -75,9 +75,15 @@ public final class JdbcTypeMap {
             case UUID -> "UUID";
             case ENUM -> "ENUM";
             case STRUCT -> "STRUCT";
-            case LIST -> "LIST";
+            case LIST -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.ListInfo)
+                    .map(i -> (ExtraTypeInfo.ListInfo) i)
+                    .map(l -> typeName(l.childType()) + "[]")
+                    .orElse("LIST");
             case MAP -> "MAP";
-            case ARRAY -> "ARRAY";
+            case ARRAY -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.ArrayInfo)
+                    .map(i -> (ExtraTypeInfo.ArrayInfo) i)
+                    .map(a -> typeName(a.childType()) + "[" + a.size() + "]")
+                    .orElse("ARRAY");
             case SQLNULL -> "NULL";
             default -> type.id().name();
         };
