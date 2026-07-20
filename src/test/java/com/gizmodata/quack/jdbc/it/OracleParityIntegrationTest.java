@@ -13,7 +13,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Types;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -50,8 +49,8 @@ public class OracleParityIntegrationTest {
     }
 
     @Test
-    @DisplayName("Scalar and array-of-scalar column types match duckdb-jdbc exactly")
-    void scalarAndArrayTypesMatchOracle() throws Exception {
+    @DisplayName("Column types match duckdb-jdbc exactly across scalars, arrays, and STRUCT/MAP/ENUM")
+    void columnTypesMatchOracle() throws Exception {
         String[] queries = {
                 "SELECT 42 AS a",
                 "SELECT 1.23::DECIMAL(5,2) AS a",
@@ -64,42 +63,20 @@ public class OracleParityIntegrationTest {
                 "SELECT ['12345678-1234-1234-1234-123456789012'::UUID] AS a",
                 "SELECT [1.5, 2.5]::DOUBLE[2] AS a",
                 "SELECT [[1, 2], [3, 4]]::INTEGER[2][] AS a",
+                "SELECT {'x': 1, 'y': 'a'} AS a",
+                "SELECT [{'x': 1, 'y': 'a'}] AS a",
+                "SELECT [{'x': 1}] AS a",
+                "SELECT {'a': 1.23::DECIMAL(5,2), 'b': [1, 2], 'c': {'d': 1}} AS a",
+                "SELECT MAP {1: 'a', 2: 'b'} AS a",
+                "SELECT [MAP {1: 'a'}] AS a",
+                "SELECT MAP {'k': [1, 2]} AS a",
+                "SELECT 'x'::mood AS a",
+                "SELECT ['x']::mood[] AS a",
+                "SELECT {'m': 'x'::mood} AS a",
         };
         for (String sql : queries) {
             assertColumnTypeParity(sql);
         }
-    }
-
-    @Test
-    @DisplayName("STRUCT/MAP/ENUM currently diverge from duckdb-jdbc (flip these when nested typeName lands)")
-    void structMapEnumTypeNamesCurrentlyDivergeFromOracle() throws Exception {
-        assertQuackVsOracle("SELECT [{'x': 1, 'y': 'a'}] AS a",
-                "STRUCT[]", Types.ARRAY,
-                "STRUCT(x INTEGER, y VARCHAR)[]", Types.ARRAY);
-
-        assertQuackVsOracle("SELECT [{'x': 1}] AS a",
-                "STRUCT[]", Types.ARRAY,
-                "STRUCT(x INTEGER)[]", Types.ARRAY);
-
-        assertQuackVsOracle("SELECT ['x']::mood[] AS a",
-                "ENUM[]", Types.ARRAY,
-                "ENUM('x', 'y', 'z')[]", Types.ARRAY);
-
-        assertQuackVsOracle("SELECT [MAP {1: 'a'}] AS a",
-                "MAP[]", Types.ARRAY,
-                "MAP(INTEGER, VARCHAR)[]", Types.ARRAY);
-
-        assertQuackVsOracle("SELECT {'x': 1, 'y': 'a'} AS a",
-                "STRUCT", Types.STRUCT,
-                "STRUCT(x INTEGER, y VARCHAR)", Types.STRUCT);
-
-        assertQuackVsOracle("SELECT MAP {1: 'a', 2: 'b'} AS a",
-                "MAP", Types.ARRAY,
-                "MAP(INTEGER, VARCHAR)", Types.OTHER);
-
-        assertQuackVsOracle("SELECT 'x'::mood AS a",
-                "ENUM", Types.VARCHAR,
-                "ENUM", Types.OTHER);
     }
 
     private void assertColumnTypeParity(String sql) throws SQLException {
@@ -107,16 +84,5 @@ public class OracleParityIntegrationTest {
         DuckDbOracle.ColumnType o = DuckDbOracle.columnType(oracle, sql);
         assertEquals(o.typeName(), q.typeName(), "getColumnTypeName mismatch for: " + sql);
         assertEquals(o.type(), q.type(), "getColumnType mismatch for: " + sql);
-    }
-
-    private void assertQuackVsOracle(String sql,
-                                     String expectedQuackName, int expectedQuackType,
-                                     String expectedOracleName, int expectedOracleType) throws SQLException {
-        DuckDbOracle.ColumnType q = DuckDbOracle.columnType(quack, sql);
-        DuckDbOracle.ColumnType o = DuckDbOracle.columnType(oracle, sql);
-        assertEquals(expectedQuackName, q.typeName(), "quack getColumnTypeName drifted for: " + sql);
-        assertEquals(expectedQuackType, q.type(), "quack getColumnType drifted for: " + sql);
-        assertEquals(expectedOracleName, o.typeName(), "oracle getColumnTypeName drifted for: " + sql);
-        assertEquals(expectedOracleType, o.type(), "oracle getColumnType drifted for: " + sql);
     }
 }

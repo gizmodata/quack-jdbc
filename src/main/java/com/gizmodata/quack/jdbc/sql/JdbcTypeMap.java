@@ -5,6 +5,7 @@ import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 
 import java.sql.Types;
+import java.util.stream.Collectors;
 
 public final class JdbcTypeMap {
 
@@ -30,15 +31,20 @@ public final class JdbcTypeMap {
             case TIMESTAMP_TZ -> Types.TIMESTAMP_WITH_TIMEZONE;
             case INTERVAL -> Types.OTHER;
             case UUID -> Types.OTHER;
-            case ENUM -> Types.VARCHAR;
+            case ENUM -> Types.OTHER;
             case STRUCT -> Types.STRUCT;
-            case LIST, MAP, ARRAY -> Types.ARRAY;
+            case LIST, ARRAY -> Types.ARRAY;
+            case MAP -> Types.OTHER;
             case SQLNULL -> Types.NULL;
             default -> Types.OTHER;
         };
     }
 
     public static String typeName(LogicalType type) {
+        return typeName(type, false);
+    }
+
+    private static String typeName(LogicalType type, boolean nested) {
         return switch (type.id()) {
             case BOOLEAN -> "BOOLEAN";
             case TINYINT -> "TINYINT";
@@ -73,20 +79,58 @@ public final class JdbcTypeMap {
             case TIMESTAMP_TZ -> "TIMESTAMPTZ";
             case INTERVAL -> "INTERVAL";
             case UUID -> "UUID";
-            case ENUM -> "ENUM";
-            case STRUCT -> "STRUCT";
+            case ENUM -> nested ? enumTypeName(type) : "ENUM";
+            case STRUCT -> structTypeName(type);
             case LIST -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.ListInfo)
                     .map(i -> (ExtraTypeInfo.ListInfo) i)
-                    .map(l -> typeName(l.childType()) + "[]")
+                    .map(l -> typeName(l.childType(), true) + "[]")
                     .orElse("LIST");
-            case MAP -> "MAP";
+            case MAP -> mapTypeName(type);
             case ARRAY -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.ArrayInfo)
                     .map(i -> (ExtraTypeInfo.ArrayInfo) i)
-                    .map(a -> typeName(a.childType()) + "[" + a.size() + "]")
+                    .map(a -> typeName(a.childType(), true) + "[" + a.size() + "]")
                     .orElse("ARRAY");
             case SQLNULL -> "NULL";
             default -> type.id().name();
         };
+    }
+
+    private static String enumTypeName(LogicalType type) {
+        return type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.EnumInfo)
+                .map(i -> (ExtraTypeInfo.EnumInfo) i)
+                .map(e -> e.values().stream()
+                        .map(v -> "'" + v.replace("'", "''") + "'")
+                        .collect(Collectors.joining(", ", "ENUM(", ")")))
+                .orElse("ENUM");
+    }
+
+    private static String structTypeName(LogicalType type) {
+        return type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.StructInfo)
+                .map(i -> (ExtraTypeInfo.StructInfo) i)
+                .map(s -> s.childTypes().stream()
+                        .map(ct -> quoteIdentifier(ct.name()) + " " + typeName(ct.type(), true))
+                        .collect(Collectors.joining(", ", "STRUCT(", ")")))
+                .orElse("STRUCT");
+    }
+
+    private static String mapTypeName(LogicalType type) {
+        return type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.ListInfo)
+                .map(i -> (ExtraTypeInfo.ListInfo) i)
+                .map(ExtraTypeInfo.ListInfo::childType)
+                .flatMap(child -> child.typeInfo()
+                        .filter(i -> i instanceof ExtraTypeInfo.StructInfo)
+                        .map(i -> (ExtraTypeInfo.StructInfo) i))
+                .filter(s -> s.childTypes().size() == 2)
+                .map(s -> "MAP(" + typeName(s.childTypes().get(0).type(), true) + ", "
+                        + typeName(s.childTypes().get(1).type(), true) + ")")
+                .orElse("MAP");
+    }
+
+    private static String quoteIdentifier(String name) {
+        if (name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            return name;
+        }
+        return "\"" + name.replace("\"", "\"\"") + "\"";
     }
 
     public static int displaySize(LogicalType type) {
