@@ -105,6 +105,7 @@ jdbc:quack://host[:port][/database][?token=…&tls=…]
 | `useEncryption`      | false   | Alias for `tls` (matches the gizmosql-jdbc-driver convention).            |
 | `connectTimeout`     | 10      | HTTP connect timeout, as seconds or an ISO-8601 duration like `PT5S`.     |
 | `requestTimeout`     | 60      | Per-request HTTP timeout, as seconds or an ISO-8601 duration like `PT30S`. |
+| `httpHeader.<Name>`  | (none)  | Extra HTTP header sent with every request (proxy/LB auth). Repeatable. Properties only — rejected on the URL. |
 
 These options can be set on the URL or via `java.util.Properties` passed
 to `DriverManager.getConnection`. URL values take precedence. Token

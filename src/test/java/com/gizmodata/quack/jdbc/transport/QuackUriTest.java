@@ -104,4 +104,46 @@ class QuackUriTest {
         assertThrows(RuntimeException.class,
                 () -> QuackUri.parse("jdbc:quack://h:9494?requestTimeout=forever").requestTimeout());
     }
+
+    @Test
+    void extraHttpHeadersComeFromProperties() {
+        Properties props = new Properties();
+        props.setProperty("httpHeader.X-Proxy-Auth", "s3cret");
+        props.setProperty("httpHeader.X-Trace-Id", "abc123");
+        props.setProperty("httpHeader.X-Cleared", "");
+
+        QuackUri u = QuackUri.parse("jdbc:quack://h:9494", props);
+
+        assertEquals("s3cret", u.extraHttpHeaders().get("X-Proxy-Auth"));
+        assertEquals("abc123", u.extraHttpHeaders().get("X-Trace-Id"));
+        assertFalse(u.extraHttpHeaders().containsKey("X-Cleared"),
+                "empty-valued header should be omitted");
+    }
+
+    @Test
+    void extraHttpHeadersRejectedOnUrl() {
+        QuackException e = assertThrows(QuackException.class,
+                () -> QuackUri.parse("jdbc:quack://h:9494?httpHeader.X-Evil=1"));
+        assertTrue(e.getMessage().contains("connection Properties"));
+    }
+
+    @Test
+    void extraHttpHeadersValidated() {
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h:9494",
+                propsOf("httpHeader.", "v")));                       // empty name
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h:9494",
+                propsOf("httpHeader.Bad Name", "v")));                // space in name
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h:9494",
+                propsOf("httpHeader.X-H", "a\r\nInjected: 1")));      // CRLF in value
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h:9494",
+                propsOf("httpHeader.Content-Type", "text/plain")));   // reserved
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h:9494",
+                propsOf("httpHeader.host", "evil.example")));         // reserved, case-insensitive
+    }
+
+    private static Properties propsOf(String key, String value) {
+        Properties props = new Properties();
+        props.setProperty(key, value);
+        return props;
+    }
 }

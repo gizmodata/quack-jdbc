@@ -21,6 +21,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -47,6 +48,7 @@ public final class QuackHttpTransport implements QuackTransport {
     private final URI endpoint;
     private final HttpClient httpClient;
     private final Duration requestTimeout;
+    private final Map<String, String> extraHeaders;
 
     public QuackHttpTransport(URI endpoint) {
         this(endpoint, HttpClient.newBuilder()
@@ -56,16 +58,23 @@ public final class QuackHttpTransport implements QuackTransport {
     }
 
     public QuackHttpTransport(URI endpoint, HttpClient httpClient, Duration requestTimeout) {
+        this(endpoint, httpClient, requestTimeout, Map.of());
+    }
+
+    public QuackHttpTransport(URI endpoint, HttpClient httpClient, Duration requestTimeout,
+                              Map<String, String> extraHeaders) {
         this.endpoint = endpoint;
         this.httpClient = httpClient;
         this.requestTimeout = requestTimeout;
+        this.extraHeaders = Map.copyOf(extraHeaders);
     }
 
     public static QuackHttpTransport from(QuackUri uri) {
         HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(uri.connectTimeout())
                 .build();
-        return new QuackHttpTransport(uri.httpUri(), client, uri.requestTimeout());
+        return new QuackHttpTransport(uri.httpUri(), client, uri.requestTimeout(),
+                uri.extraHttpHeaders());
     }
 
     Duration requestTimeout() {
@@ -83,8 +92,14 @@ public final class QuackHttpTransport implements QuackTransport {
         URI[] attempts = endpointCandidates();
         IOException lastFailure = null;
         for (URI attempt : attempts) {
-            HttpRequest httpRequest = HttpRequest.newBuilder(attempt)
-                    .timeout(requestTimeout)
+            HttpRequest.Builder builder = HttpRequest.newBuilder(attempt)
+                    .timeout(requestTimeout);
+            // Extra headers first, protocol headers second: Content-Type
+            // and Accept must win (QuackUri validation also rejects them).
+            for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
+                builder.header(header.getKey(), header.getValue());
+            }
+            HttpRequest httpRequest = builder
                     .header("Content-Type", QuackConstants.DUCKDB_MIME_TYPE)
                     .header("Accept", QuackConstants.DUCKDB_MIME_TYPE)
                     .POST(BodyPublishers.ofByteArray(body))

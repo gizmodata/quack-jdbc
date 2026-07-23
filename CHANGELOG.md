@@ -6,7 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-(nothing yet)
+### Added
+
+- **Extra HTTP headers**: `httpHeader.<Name>` connection properties add
+  static headers to every request the driver makes (proxy/LB auth),
+  mirroring the `EXTRA_HTTP_HEADERS` parameter duckdb-quack added to
+  its client secret (duckdb/duckdb-quack#204). Accepted via connection
+  `Properties` only — rejected on the JDBC URL so a pasted URL cannot
+  inject headers; protocol-owned headers (`Content-Type`, `Accept`,
+  `Host`, `Content-Length`) are reserved; an empty value omits the
+  header. Same-day parity with adbc-driver-quack's
+  `adbc.quack.http.header.<Name>` options.
+
+### Changed
+
+- Verified against DuckDB v1.5.5 (2026-07-22): full suite green with a
+  v1.5.5 CLI as the integration server; wire protocol unchanged, so
+  the supported server floor stays v1.5.3.
 
 ## [0.2.0-alpha.4] — 2026-06-12
 

@@ -24,6 +24,16 @@ public record QuackUri(String host,
 
     public static final String URL_PREFIX = "jdbc:quack:";
 
+    /**
+     * Prefix for extra-HTTP-header connection properties:
+     * {@code httpHeader.<Header-Name>=<value>} sends the header with
+     * every request (proxy/LB auth). Mirrors duckdb-quack's
+     * {@code EXTRA_HTTP_HEADERS} secret parameter. Accepted via
+     * connection {@link Properties} only — rejected on the JDBC URL so
+     * a pasted URL cannot inject headers into the driver's requests.
+     */
+    public static final String HTTP_HEADER_PREFIX = "httpHeader.";
+
     public static boolean acceptsUrl(String url) {
         return url != null && url.startsWith(URL_PREFIX);
     }
@@ -87,8 +97,18 @@ public record QuackUri(String host,
                         + " is only accepted via connection Properties, not the JDBC URL");
             }
         }
+        for (String key : params.keySet()) {
+            if (key.startsWith(HTTP_HEADER_PREFIX)) {
+                throw new QuackException("Quack JDBC property " + key
+                        + " is only accepted via connection Properties, not the JDBC URL");
+            }
+        }
         for (String key : properties.stringPropertyNames()) {
             params.putIfAbsent(key, properties.getProperty(key));
+            if (key.startsWith(HTTP_HEADER_PREFIX)) {
+                validateHeader(key.substring(HTTP_HEADER_PREFIX.length()),
+                        properties.getProperty(key));
+            }
         }
 
         boolean tls = parseBool(params.getOrDefault("tls", params.getOrDefault("useEncryption", "false")));
@@ -115,6 +135,44 @@ public record QuackUri(String host,
 
     public String quackUri() {
         return "quack:" + host + ":" + port;
+    }
+
+    /**
+     * Extra HTTP headers from {@code httpHeader.*} properties, in
+     * property order. An empty value clears/omits the header.
+     */
+    public Map<String, String> extraHttpHeaders() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : properties.entrySet()) {
+            if (!entry.getKey().startsWith(HTTP_HEADER_PREFIX)) {
+                continue;
+            }
+            String name = entry.getKey().substring(HTTP_HEADER_PREFIX.length()).trim();
+            String value = entry.getValue();
+            if (value == null || value.isEmpty()) {
+                continue;
+            }
+            headers.put(name, value);
+        }
+        return headers;
+    }
+
+    private static void validateHeader(String name, String value) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty() || trimmed.chars().anyMatch(c ->
+                c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ':')) {
+            throw new QuackException("Invalid HTTP header name in property "
+                    + HTTP_HEADER_PREFIX + name);
+        }
+        if (value != null && (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0)) {
+            throw new QuackException("HTTP header " + trimmed + " value must not contain CR/LF");
+        }
+        switch (trimmed.toLowerCase()) {
+            case "content-type", "accept", "content-length", "host" ->
+                    throw new QuackException("HTTP header " + trimmed
+                            + " is reserved by the Quack protocol");
+            default -> { }
+        }
     }
 
     private static boolean parseBool(String value) {

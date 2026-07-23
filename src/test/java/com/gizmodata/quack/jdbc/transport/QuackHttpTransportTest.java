@@ -166,6 +166,35 @@ class QuackHttpTransportTest {
     }
 
     @Test
+    void extraHeadersAreSentWithEveryRequest() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<com.sun.net.httpserver.Headers> seen =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        HttpServer server = HttpServer.create(
+                new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        AtomicInteger hits = new AtomicInteger();
+        server.createContext("/quack", (HttpExchange exchange) -> {
+            seen.set(exchange.getRequestHeaders());
+            handler(hits).handle(exchange);
+        });
+        server.setExecutor(null);
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            java.util.Properties props = new java.util.Properties();
+            props.setProperty("httpHeader.X-Proxy-Auth", "s3cret");
+            QuackUri uri = QuackUri.parse("jdbc:quack://127.0.0.1:" + port, props);
+
+            probe(QuackHttpTransport.from(uri));
+
+            assertEquals("s3cret", seen.get().getFirst("X-Proxy-Auth"));
+            assertEquals("application/duckdb", seen.get().getFirst("Content-Type"),
+                    "protocol Content-Type must not be displaced by extra headers");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void httpEndpointStillExpandsToResolvedAddressCandidates() {
         URI endpoint = URI.create("http://localhost:9494/quack");
         QuackHttpTransport transport = transportWith(endpoint);
