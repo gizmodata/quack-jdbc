@@ -1,17 +1,23 @@
 package com.gizmodata.quack.jdbc.message;
 
+import com.gizmodata.quack.jdbc.QuackProtocolException;
 import com.gizmodata.quack.jdbc.QuackUnsupportedTypeException;
 import com.gizmodata.quack.jdbc.codec.BinaryReader;
 import com.gizmodata.quack.jdbc.codec.BinaryWriter;
+import com.gizmodata.quack.jdbc.type.ChildType;
+import com.gizmodata.quack.jdbc.type.ExtraTypeInfo;
 import com.gizmodata.quack.jdbc.type.LogicalType;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Decode tests for the compressed vector encodings the Quack server can emit
@@ -81,6 +87,19 @@ class VectorEncodingDecodeTest {
         assertEquals(10, ((Number) v.getObject(1)).intValue());
         assertEquals(20, ((Number) v.getObject(2)).intValue());
         assertEquals(30, ((Number) v.getObject(3)).intValue());
+    }
+
+    @Test
+    void structEncodeRejectsNonMapRow() {
+        // A non-null STRUCT row that is not a Map must fail loudly rather than
+        // silently encoding every field as NULL in the bulk-load path.
+        LogicalType structType = LogicalType.of(LogicalTypeId.STRUCT,
+                new ExtraTypeInfo.StructInfo(List.of(new ChildType("x", INT)), Optional.empty()));
+        DecodedVector vector = new DecodedVector.ObjectVec(structType, new Object[]{"not-a-map"});
+        QuackProtocolException ex = assertThrows(QuackProtocolException.class,
+                () -> VectorCodec.encodeVector(new BinaryWriter(), structType, vector));
+        assertTrue(ex.getMessage().contains("map value for STRUCT"),
+                "unexpected message: " + ex.getMessage());
     }
 
     @Test

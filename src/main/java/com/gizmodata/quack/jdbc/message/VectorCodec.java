@@ -753,6 +753,10 @@ public final class VectorCodec {
             Object[] childValues = new Object[count];
             for (int r = 0; r < count; r++) {
                 Object row = vector.isNull(r) ? null : vector.getObject(r);
+                if (row != null && !(row instanceof Map<?, ?>)) {
+                    throw new QuackProtocolException("Expected a map value for STRUCT row " + r
+                            + ", got " + row.getClass().getName());
+                }
                 childValues[r] = (row instanceof Map<?, ?> m) ? m.get(child.name()) : null;
             }
             encodeVector(writer, child.type(), new DecodedVector.ObjectVec(child.type(), childValues));
