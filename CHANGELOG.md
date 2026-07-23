@@ -17,12 +17,61 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Host`, `Content-Length`) are reserved; an empty value omits the
   header. Same-day parity with adbc-driver-quack's
   `adbc.quack.http.header.<Name>` options.
+- **Full nested type names in `ResultSetMetaData`**: `getColumnTypeName`
+  now reports the element/field types — `INTEGER[]`, `DOUBLE[2]`,
+  `INTEGER[][]`, `STRUCT(name type, ...)`, `MAP(K, V)`, and
+  `ENUM('a', 'b', ...)` — instead of bare `LIST`/`ARRAY`/`STRUCT`/`MAP`/
+  `ENUM`, recursing through nested types and double-quoting non-identifier
+  field names, matching DuckDB's own JDBC driver. ENUM reports its bare
+  name at the top level and the expanded form only when nested, mirroring
+  duckdb-jdbc.
+- **JDBC wrapper objects for nested columns**: `getObject` now returns a
+  `java.sql.Array` for LIST/ARRAY, a `java.sql.Struct` (whose
+  `getAttributes()` are the field values in declared order) for STRUCT,
+  and a `java.util.Map` for MAP — matching duckdb-jdbc.
+  `getObject(i, Array.class)` and `getObject(i, Struct.class)` return the
+  wrappers.
+- **Nested APPEND encoding**: `VectorCodec` now encodes STRUCT, LIST,
+  ARRAY, and MAP vectors (previously scalar/VARCHAR/BLOB only), so
+  `appendChunk` can bulk-load nested data with arbitrary nesting
+  (`INTEGER[][]`, list-of-struct, struct-of-list, ...). MAP rows accept a
+  `java.util.Map`; a non-null STRUCT row that is not a `Map` is rejected
+  with `QuackProtocolException` rather than silently encoded as all-NULL.
+- **duckdb-jdbc oracle parity harness** (`-Poracle`): an opt-in test
+  profile asserting `ResultSetMetaData` matches DuckDB's own JDBC driver
+  (`duckdb_jdbc` 1.5.5.0) across a shared type matrix. The oracle driver
+  is reached via `java.sql.*` + `Class.forName`, so there is no
+  compile-time dependency and a plain `mvn test` stays native-free (the
+  `oracle` JUnit tag is excluded by default).
 
 ### Changed
 
 - Verified against DuckDB v1.5.5 (2026-07-22): full suite green with a
   v1.5.5 CLI as the integration server; wire protocol unchanged, so
   the supported server floor stays v1.5.3.
+- **MAP and ENUM `getColumnType` now report `Types.OTHER`** (previously
+  `Types.ARRAY` for MAP and `Types.VARCHAR` for ENUM), matching
+  duckdb-jdbc.
+- **MAP columns now materialize as `java.util.Map`** (a `LinkedHashMap`
+  of key to value) instead of a list of key/value entry structs.
+  Consequently `getObject` on a MAP column returns a `java.util.Map`, and
+  **`getArray()` on a MAP column now throws** instead of returning the
+  entry-struct list — MAP is no longer surfaced as a LIST.
+
+### Fixed
+
+- `Statement.execute(...)` no longer wedges tools that drain results in a
+  loop (DataGrip, DBeaver) after an INSERT/UPDATE/DELETE. `QuackStatement`
+  now overrides `getMoreResults()` (and `getMoreResults(int)`) to advance
+  past the current result — closing any open `ResultSet` and resetting the
+  update count to `-1`. Per the JDBC contract, end-of-results is signalled
+  by `getMoreResults() == false && getUpdateCount() == -1`; previously the
+  update count kept reporting the affected-row count, so the tool's drain
+  loop never terminated and the statement appeared to "never complete"
+  even though the row had already been committed server-side. A failing
+  statement (e.g. a duplicate primary key) was unaffected because it throws
+  immediately. Covered by new drain-loop integration tests, including the
+  reported PRIMARY KEY duplicate-then-new-insert sequence.
 
 ## [0.2.0-alpha.4] — 2026-06-12
 

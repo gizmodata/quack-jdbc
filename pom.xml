@@ -60,6 +60,8 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.2</junit.version>
+        <duckdb.jdbc.version>1.5.5.0</duckdb.jdbc.version>
+        <excluded.test.groups>oracle</excluded.test.groups>
     </properties>
 
     <dependencies>
@@ -82,6 +84,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <excludedGroups>${excluded.test.groups}</excludedGroups>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -99,6 +104,20 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>oracle</id>
+            <properties>
+                <excluded.test.groups>disabled-no-such-group</excluded.test.groups>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>org.duckdb</groupId>
+                    <artifactId>duckdb_jdbc</artifactId>
+                    <version>${duckdb.jdbc.version}</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+        </profile>
         <profile>
             <id>release</id>
             <build>

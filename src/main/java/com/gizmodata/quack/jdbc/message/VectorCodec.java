@@ -384,7 +384,7 @@ public final class VectorCodec {
                     for (int k = 0; k < e.length; k++) {
                         slice.add(childVector.getObject(e.offset + k));
                     }
-                    values[row] = slice;
+                    values[row] = type.id() == LogicalTypeId.MAP ? toMap(slice) : slice;
                 }
                 yield new DecodedVector.ObjectVec(type, values);
             }
@@ -416,6 +416,16 @@ public final class VectorCodec {
             default -> throw new QuackUnsupportedTypeException(
                     "Variable-width physical type " + physicalType + " is not supported");
         };
+    }
+
+    private static Map<Object, Object> toMap(List<Object> entries) {
+        Map<Object, Object> map = new LinkedHashMap<>();
+        for (Object entry : entries) {
+            if (entry instanceof Map<?, ?> kv) {
+                map.put(kv.get("key"), kv.get("value"));
+            }
+        }
+        return map;
     }
 
     // ---- typed fixed-flat decoding ----
@@ -728,10 +738,95 @@ public final class VectorCodec {
                     writer.writeStringBytes(encodeStringLikeValueForWrite(type, vector.getObject(i)));
                 }
             });
+            case STRUCT -> encodeStructChildren(writer, type, vector, count);
+            case LIST -> encodeListChild(writer, type, vector, count);
+            case ARRAY -> encodeArrayChild(writer, type, vector, count);
             default -> throw new QuackUnsupportedTypeException(
-                    "Encoding physical type " + physical + " is not yet supported"
-                            + " (open an issue if you need STRUCT/LIST/ARRAY/MAP append)");
+                    "Encoding physical type " + physical + " is not yet supported");
         }
+    }
+
+    private static void encodeStructChildren(BinaryWriter writer, LogicalType type,
+                                             DecodedVector vector, int count) {
+        List<ChildType> children = PhysicalTypeUtil.getStructChildren(type);
+        writer.writeField(103, () -> writer.writeList(children, (child, ci) -> {
+            Object[] childValues = new Object[count];
+            for (int r = 0; r < count; r++) {
+                Object row = vector.isNull(r) ? null : vector.getObject(r);
+                if (row != null && !(row instanceof Map<?, ?>)) {
+                    throw new QuackProtocolException("Expected a map value for STRUCT row " + r
+                            + ", got " + row.getClass().getName());
+                }
+                childValues[r] = (row instanceof Map<?, ?> m) ? m.get(child.name()) : null;
+            }
+            encodeVector(writer, child.type(), new DecodedVector.ObjectVec(child.type(), childValues));
+        }));
+    }
+
+    private static void encodeListChild(BinaryWriter writer, LogicalType type,
+                                        DecodedVector vector, int count) {
+        LogicalType childType = PhysicalTypeUtil.getChildType(type);
+        List<Object> flat = new ArrayList<>();
+        List<ListEntry> entries = new ArrayList<>(count);
+        int offset = 0;
+        for (int r = 0; r < count; r++) {
+            List<Object> elements = listElements(type, vector.isNull(r) ? null : vector.getObject(r));
+            entries.add(new ListEntry(offset, elements.size()));
+            flat.addAll(elements);
+            offset += elements.size();
+        }
+        int listSize = offset;
+        writer.writeField(104, () -> writer.writeUleb(listSize));
+        writer.writeField(105, () -> writer.writeList(entries, (e, i) -> writer.writeObject(o -> {
+            o.writeField(100, () -> o.writeUleb(e.offset()));
+            o.writeField(101, () -> o.writeUleb(e.length()));
+        })));
+        writer.writeField(106, () -> encodeVector(writer, childType,
+                new DecodedVector.ObjectVec(childType, flat.toArray())));
+    }
+
+    private static void encodeArrayChild(BinaryWriter writer, LogicalType type,
+                                         DecodedVector vector, int count) {
+        int arraySize = PhysicalTypeUtil.getArraySize(type);
+        LogicalType childType = PhysicalTypeUtil.getChildType(type);
+        Object[] flat = new Object[count * arraySize];
+        for (int r = 0; r < count; r++) {
+            Object row = vector.isNull(r) ? null : vector.getObject(r);
+            if (row == null) {
+                continue;
+            }
+            if (!(row instanceof List<?> list) || list.size() != arraySize) {
+                throw new QuackProtocolException("ARRAY row " + r + " must have exactly "
+                        + arraySize + " elements");
+            }
+            for (int k = 0; k < arraySize; k++) {
+                flat[r * arraySize + k] = list.get(k);
+            }
+        }
+        writer.writeField(103, () -> writer.writeUleb(arraySize));
+        writer.writeField(104, () -> encodeVector(writer, childType,
+                new DecodedVector.ObjectVec(childType, flat)));
+    }
+
+    private static List<Object> listElements(LogicalType type, Object rowValue) {
+        if (rowValue == null) {
+            return List.of();
+        }
+        if (type.id() == LogicalTypeId.MAP && rowValue instanceof Map<?, ?> map) {
+            List<Object> entries = new ArrayList<>(map.size());
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                Map<String, Object> kv = new LinkedHashMap<>();
+                kv.put("key", e.getKey());
+                kv.put("value", e.getValue());
+                entries.add(kv);
+            }
+            return entries;
+        }
+        if (rowValue instanceof List<?> list) {
+            return new ArrayList<>(list);
+        }
+        throw new QuackProtocolException("Expected a list or map value for " + type.id()
+                + ", got " + rowValue.getClass().getName());
     }
 
     private static long[] extractValidity(DecodedVector vector) {

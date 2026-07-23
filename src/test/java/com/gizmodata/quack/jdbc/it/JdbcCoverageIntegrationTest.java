@@ -22,6 +22,8 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Struct;
+import java.sql.Types;
+import java.time.Duration;
 import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -31,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -132,6 +135,130 @@ public class JdbcCoverageIntegrationTest {
     // ---- Statement / PreparedStatement ----
 
     @Test
+    void executeDrainLoopTerminatesAfterInsert() throws Exception {
+        // Replicates the JDBC multi-result drain loop that DataGrip / DBeaver
+        // run after Statement.execute(...): iterate until
+        // getMoreResults() == false && getUpdateCount() == -1. A driver that
+        // does not reset the update count when advancing makes this loop spin
+        // forever after an INSERT/UPDATE/DELETE (the row lands server-side but
+        // the exec call never appears to complete to the tool).
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            s.execute("DROP TABLE IF EXISTS jdbc_it_drain");
+            s.execute("CREATE TABLE jdbc_it_drain (id INTEGER)");
+
+            long affected = assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {
+                boolean isResultSet = s.execute("INSERT INTO jdbc_it_drain VALUES (1), (2), (3)");
+                long total = 0;
+                int guard = 0;
+                while (true) {
+                    if (isResultSet) {
+                        try (ResultSet rs = s.getResultSet()) {
+                            while (rs.next()) { /* drain */ }
+                        }
+                    } else {
+                        int uc = s.getUpdateCount();
+                        if (uc == -1) break;              // no more results
+                        total += uc;
+                    }
+                    if (++guard > 1000) {
+                        throw new AssertionError("drain loop did not terminate: "
+                                + "getMoreResults()/getUpdateCount() never signalled end-of-results");
+                    }
+                    isResultSet = s.getMoreResults();
+                }
+                return total;
+            });
+
+            assertEquals(3, affected, "INSERT should report 3 affected rows exactly once");
+            s.execute("DROP TABLE jdbc_it_drain");
+        }
+    }
+
+    @Test
+    void primaryKeyDuplicateErrorThenNewInsertCompletes() throws Exception {
+        // Mirrors the reported DataGrip scenario against an in-memory DuckDB:
+        // a PRIMARY KEY table where a duplicate insert returns an error and a
+        // subsequent new-value insert must complete (not hang) through the
+        // JDBC drain loop.
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            s.execute("DROP TABLE IF EXISTS jdbc_it_pk");
+            s.execute("CREATE TABLE jdbc_it_pk (name VARCHAR(50) PRIMARY KEY)");
+
+            assertEquals(1, drainingExecute(s, "INSERT INTO jdbc_it_pk VALUES ('a')"));
+
+            // Duplicate key -> immediate error; the statement stays usable.
+            assertThrows(SQLException.class,
+                    () -> s.execute("INSERT INTO jdbc_it_pk VALUES ('a')"));
+
+            // New value -> must complete, not hang.
+            assertEquals(1, drainingExecute(s, "INSERT INTO jdbc_it_pk VALUES ('b')"));
+
+            try (ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM jdbc_it_pk")) {
+                assertTrue(rs.next());
+                assertEquals(2, rs.getInt(1));
+            }
+            s.execute("DROP TABLE jdbc_it_pk");
+        }
+    }
+
+    /**
+     * Runs {@link Statement#execute(String)} and drains all results the way a
+     * JDBC tool (DataGrip / DBeaver) does, returning the total affected-row
+     * count. Fails fast (never hangs) if the multi-result protocol does not
+     * signal end-of-results via
+     * {@code getMoreResults() == false && getUpdateCount() == -1}.
+     */
+    private static long drainingExecute(Statement s, String sql) {
+        return assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {
+            boolean isResultSet = s.execute(sql);
+            long total = 0;
+            int guard = 0;
+            while (true) {
+                if (isResultSet) {
+                    try (ResultSet rs = s.getResultSet()) {
+                        while (rs.next()) { /* drain */ }
+                    }
+                } else {
+                    int uc = s.getUpdateCount();
+                    if (uc == -1) break;
+                    total += uc;
+                }
+                if (++guard > 1000) {
+                    throw new AssertionError("drain loop did not terminate for: " + sql);
+                }
+                isResultSet = s.getMoreResults();
+            }
+            return total;
+        });
+    }
+
+    @Test
+    void executeDrainLoopTerminatesAfterSelect() throws Exception {
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            int rows = assertTimeoutPreemptively(Duration.ofSeconds(15), () -> {
+                boolean isResultSet = s.execute("SELECT 1 AS a UNION ALL SELECT 2");
+                int seen = 0;
+                int guard = 0;
+                while (true) {
+                    if (isResultSet) {
+                        try (ResultSet rs = s.getResultSet()) {
+                            while (rs.next()) seen++;
+                        }
+                    } else {
+                        if (s.getUpdateCount() == -1) break;
+                    }
+                    if (++guard > 1000) {
+                        throw new AssertionError("drain loop did not terminate");
+                    }
+                    isResultSet = s.getMoreResults();
+                }
+                return seen;
+            });
+            assertEquals(2, rows);
+        }
+    }
+
+    @Test
     void statementBatchExecutesEachItem() throws Exception {
         try (Connection c = connect(); Statement s = c.createStatement()) {
             s.execute("DROP TABLE IF EXISTS jdbc_it_batch");
@@ -229,6 +356,24 @@ public class JdbcCoverageIntegrationTest {
     }
 
     // ---- ResultSet ----
+
+    @Test
+    void resultSetMetaDataReportsArrayElementType() throws Exception {
+        try (Connection c = connect();
+             Statement s = c.createStatement()) {
+            try (ResultSet rs = s.executeQuery("SELECT [10, 20, 30]::INTEGER[] AS a")) {
+                ResultSetMetaData md = rs.getMetaData();
+                assertEquals(Types.ARRAY, md.getColumnType(1));
+                assertEquals("INTEGER[]", md.getColumnTypeName(1));
+            }
+            try (ResultSet rs = s.executeQuery("SELECT list(x) AS a FROM (VALUES (1),(2),(3)) t(x)")) {
+                assertEquals("INTEGER[]", rs.getMetaData().getColumnTypeName(1));
+            }
+            try (ResultSet rs = s.executeQuery("SELECT [1.5, 2.5]::DOUBLE[2] AS a")) {
+                assertEquals("DOUBLE[2]", rs.getMetaData().getColumnTypeName(1));
+            }
+        }
+    }
 
     @Test
     void resultSetGetArrayReturnsJdbcArray() throws Exception {

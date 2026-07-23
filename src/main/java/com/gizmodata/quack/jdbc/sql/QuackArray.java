@@ -12,7 +12,9 @@ import java.util.Map;
 
 /**
  * Minimal {@link Array} wrapper around a Java list of decoded values
- * (the form a LIST / MAP / ARRAY Quack column decodes to).
+ * (the form a LIST / ARRAY Quack column decodes to). MAP columns decode
+ * to a {@link java.util.Map}, not a list, so they are surfaced via
+ * {@code getObject} rather than wrapped here.
  */
 public final class QuackArray implements Array {
 

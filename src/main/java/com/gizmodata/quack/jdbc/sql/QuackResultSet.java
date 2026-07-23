@@ -2,8 +2,10 @@ package com.gizmodata.quack.jdbc.sql;
 
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.message.DecodedVector;
+import com.gizmodata.quack.jdbc.type.ChildType;
 import com.gizmodata.quack.jdbc.type.ExtraTypeInfo;
 import com.gizmodata.quack.jdbc.type.LogicalType;
+import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 import com.gizmodata.quack.jdbc.type.PhysicalTypeUtil;
 
 import java.io.ByteArrayInputStream;
@@ -242,8 +244,34 @@ public final class QuackResultSet extends SkeletalResultSet {
     }
     @Override public Timestamp getTimestamp(String columnLabel) throws SQLException { return getTimestamp(findColumn(columnLabel)); }
 
-    @Override public Object getObject(int columnIndex) throws SQLException { return rawValue(columnIndex); }
-    @Override public Object getObject(String columnLabel) throws SQLException { return rawValue(columnLabel); }
+    @Override public Object getObject(int columnIndex) throws SQLException {
+        Object v = rawValue(columnIndex);
+        if (v == null) return null;
+        LogicalType type = columnTypes.get(columnIndex - 1);
+        LogicalTypeId id = type == null ? null : type.id();
+        if ((id == LogicalTypeId.LIST || id == LogicalTypeId.ARRAY) && v instanceof List<?> list) {
+            return new QuackArray(list, extractElementType(type));
+        }
+        if (id == LogicalTypeId.STRUCT && v instanceof Map<?, ?> struct) {
+            return toStruct(type, struct);
+        }
+        return v;
+    }
+    @Override public Object getObject(String columnLabel) throws SQLException { return getObject(findColumn(columnLabel)); }
+
+    private static QuackStruct toStruct(LogicalType type, Map<?, ?> values) {
+        Object[] attributes;
+        if (type.typeInfo().orElse(null) instanceof ExtraTypeInfo.StructInfo info) {
+            List<ChildType> children = info.childTypes();
+            attributes = new Object[children.size()];
+            for (int i = 0; i < children.size(); i++) {
+                attributes[i] = values.get(children.get(i).name());
+            }
+        } else {
+            attributes = values.values().toArray();
+        }
+        return new QuackStruct(JdbcTypeMap.typeName(type), attributes);
+    }
 
     @Override public Array getArray(int columnIndex) throws SQLException {
         Object v = rawValue(columnIndex);
@@ -276,6 +304,11 @@ public final class QuackResultSet extends SkeletalResultSet {
     @Override
     @SuppressWarnings("unchecked")
     public <T> T getObject(int columnIndex, Class<T> type) throws SQLException {
+        if (type == Array.class) return (T) getArray(columnIndex);
+        if (type == java.sql.Struct.class) {
+            Object wrapped = getObject(columnIndex);
+            if (wrapped instanceof java.sql.Struct s) return (T) s;
+        }
         Object v = rawValue(columnIndex);
         if (v == null) return null;
         if (type.isInstance(v)) return type.cast(v);

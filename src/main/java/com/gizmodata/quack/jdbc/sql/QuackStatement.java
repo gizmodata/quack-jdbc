@@ -137,6 +137,35 @@ public class QuackStatement extends SkeletalStatement {
         return updateCount;
     }
 
+    /**
+     * Advance past the current result. Quack executes exactly one statement
+     * per {@link #execute(String)}, so there is never a second result: this
+     * closes the current {@link ResultSet} (if any) and clears the update
+     * count. Per the JDBC contract, callers detect end-of-results when
+     * {@code getMoreResults() == false && getUpdateCount() == -1}; without
+     * resetting the count here, tools like DataGrip / DBeaver that drain
+     * results in a loop after an INSERT/UPDATE/DELETE would spin forever
+     * because {@link #getUpdateCount()} would keep reporting the affected-row
+     * count instead of {@code -1}.
+     */
+    @Override
+    public boolean getMoreResults() {
+        if (currentResultSet != null) {
+            currentResultSet.close();
+            currentResultSet = null;
+        }
+        updateCount = -1;
+        return false;
+    }
+
+    @Override
+    public boolean getMoreResults(int current) {
+        // KEEP_CURRENT_RESULT / CLOSE_ALL_RESULTS only matter with multiple
+        // open result sets, which Quack never produces. Behave like the
+        // no-arg form so the drain loop terminates.
+        return getMoreResults();
+    }
+
     @Override
     public void close() {
         if (closed) return;
