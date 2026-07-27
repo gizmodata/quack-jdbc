@@ -17,7 +17,9 @@ familiar `jdbc:quack://` URL.
 > Expect breaking changes between now and then. As of DuckDB v1.5.3
 > ("Variegata"), `quack` ships as a **core** extension — no more
 > `core_nightly` repository needed. This driver is tested against the
-> `quack` extension bundled with DuckDB CLI v1.5.3.
+> `quack` extension bundled with DuckDB CLI v1.5.4, including a
+> parity suite that checks column-type reporting against DuckDB's own
+> JDBC driver (`duckdb_jdbc`) as a behavioral oracle.
 
 ## Quickstart
 
@@ -231,13 +233,19 @@ that want "the latest jar" can fetch a stable URL.
 ```bash
 mvn test                       # unit + integration tests
 mvn -Dtest='!*Integration*' test   # unit only (no duckdb required)
+mvn -Poracle test              # also run the duckdb-jdbc parity suite
 ```
 
 Integration tests spawn a real DuckDB CLI as a Quack server and exercise
 the driver end-to-end: connection handshake, CRUD, multi-chunk fetches,
-scalar type round-trips, `DatabaseMetaData` listings, bad-token auth,
-concurrent connections, and more. They auto-skip when `duckdb` is not on
-PATH. Override the binary with `QUACK_IT_DUCKDB=/path/to/duckdb`.
+scalar and nested type round-trips, `DatabaseMetaData` listings, bad-token
+auth, concurrent connections, and more. They auto-skip when `duckdb` is not
+on PATH. Override the binary with `QUACK_IT_DUCKDB=/path/to/duckdb`.
+
+The `oracle` profile adds `duckdb_jdbc` as a test-only dependency and runs
+the parity suite that compares `ResultSetMetaData`/`getObject` behavior
+against DuckDB's own JDBC driver. It is off by default so a plain
+`mvn test` needs no native DuckDB JDBC library.
 
 ## Design
 
@@ -263,15 +271,22 @@ GizmoData roadmap.
 
 - DataChunk vector encodings supported: **FLAT**, **CONSTANT**,
   **DICTIONARY**, **SEQUENCE**. **FSST** is not yet supported.
-- Nested types (STRUCT / LIST / MAP / ARRAY) decode to Java collections
-  (`Map<String,Object>` / `List<Object>`); full `java.sql.Array` /
-  `java.sql.Struct` wrapping is on the roadmap.
+- Nested types (STRUCT / LIST / MAP / ARRAY) are wrapped for JDBC:
+  `getObject` returns a `java.sql.Array` for LIST/ARRAY, a `java.sql.Struct`
+  for STRUCT, and a `java.util.Map` for MAP, matching DuckDB's own JDBC
+  driver. `getColumnTypeName` reports the full element type
+  (`INTEGER[]`, `DECIMAL(5,2)[]`, `STRUCT(a INTEGER, b VARCHAR)`,
+  `MAP(INTEGER, VARCHAR)`, `ENUM('x', 'y')`, ...).
+  - Only the top-level column is wrapped: nested elements *inside* a
+    LIST/ARRAY/STRUCT/MAP remain plain `java.util.List` / `java.util.Map`
+    values rather than being recursively wrapped as `java.sql.Array` /
+    `java.sql.Struct` the way duckdb-jdbc does.
 - Prepared-statement parameters use client-side literal substitution.
   Native parameter binding will follow once the Quack protocol surfaces
-  bind parameters.
-- The `APPEND_REQUEST` fast-path (sending DataChunks directly) is
-  decoder-complete but not encoder-complete; surfaced as a `RuntimeException`
-  in `VectorCodec.encodeDataChunk` until done.
+  bind parameters (`PREPARE_REQUEST` currently carries only the SQL text).
+- The `APPEND_REQUEST` fast-path encodes scalar and nested
+  (STRUCT / LIST / ARRAY / MAP) DataChunks, so `QuackConnection.session()
+  .appendChunk(...)` can bulk-load nested data.
 
 ## Credits
 
