@@ -6,6 +6,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-alpha.5] — 2026-07-27
+
+Nested-type support, the oracle parity harness, and the DML drain-loop
+fix contributed by Jayson Minard (@apatrida) — thanks!
+
 ### Added
 
 - **Extra HTTP headers**: `httpHeader.<Name>` connection properties add

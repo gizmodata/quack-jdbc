@@ -45,14 +45,14 @@ with `duckdb -unsigned`.)
 <dependency>
     <groupId>com.gizmodata</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>0.1.0-alpha.1</version>
+    <version>0.2.0-alpha.5</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation "com.gizmodata:quack-jdbc:0.1.0-alpha.1"
+implementation "com.gizmodata:quack-jdbc:0.2.0-alpha.5"
 ```
 
 **Direct jar download** (for DBeaver, DataGrip, or any tool that takes a `.jar`):
