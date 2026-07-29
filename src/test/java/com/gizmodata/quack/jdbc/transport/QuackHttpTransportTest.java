@@ -195,6 +195,59 @@ class QuackHttpTransportTest {
     }
 
     @Test
+    void non2xxStatusSurfacesExceptionWhatHeader() throws Exception {
+        String serverError = "{\"exception_type\":\"Serialization\","
+                + "\"exception_message\":\"Failed to deserialize: field id mismatch\"}";
+        HttpServer server = HttpServer.create(
+                new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.createContext("/quack", (HttpExchange exchange) -> {
+            exchange.getRequestBody().readAllBytes();
+            exchange.getResponseHeaders().add("EXCEPTION_WHAT", serverError);
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        server.setExecutor(null);
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            URI endpoint = URI.create("http://127.0.0.1:" + port + "/quack");
+            QuackException e = assertThrows(QuackException.class,
+                    () -> probe(transportWith(endpoint)));
+            assertTrue(e.getMessage().contains("500"),
+                    "expected status code in message, got: " + e.getMessage());
+            assertTrue(e.getMessage().contains("Failed to deserialize: field id mismatch"),
+                    "expected EXCEPTION_WHAT detail in message, got: " + e.getMessage());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void non2xxStatusWithoutExceptionWhatHeaderKeepsPlainMessage() throws Exception {
+        HttpServer server = HttpServer.create(
+                new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.createContext("/quack", (HttpExchange exchange) -> {
+            exchange.getRequestBody().readAllBytes();
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        server.setExecutor(null);
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            URI endpoint = URI.create("http://127.0.0.1:" + port + "/quack");
+            QuackException e = assertThrows(QuackException.class,
+                    () -> probe(transportWith(endpoint)));
+            assertTrue(e.getMessage().contains("Quack HTTP returned status 500"),
+                    "expected plain status message, got: " + e.getMessage());
+            assertTrue(!e.getMessage().endsWith(": "),
+                    "message should not have a dangling detail separator: " + e.getMessage());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void httpEndpointStillExpandsToResolvedAddressCandidates() {
         URI endpoint = URI.create("http://localhost:9494/quack");
         QuackHttpTransport transport = transportWith(endpoint);

@@ -119,8 +119,14 @@ public final class QuackHttpTransport implements QuackTransport {
             }
 
             if (response.statusCode() / 100 != 2) {
-                throw new QuackException("Quack HTTP returned status " + response.statusCode()
-                        + " from " + attempt);
+                StringBuilder message = new StringBuilder("Quack HTTP returned status ")
+                        .append(response.statusCode()).append(" from ").append(attempt);
+                // The quack server reports the underlying failure (e.g. a
+                // serialization mismatch) in this header, with an empty body.
+                response.headers().firstValue("EXCEPTION_WHAT")
+                        .filter(detail -> !detail.isEmpty())
+                        .ifPresent(detail -> message.append(": ").append(detail));
+                throw new QuackException(message.toString());
             }
             QuackMessage decoded = MessageCodec.decode(response.body());
             if (decoded instanceof QuackMessage.ErrorResponse err) {

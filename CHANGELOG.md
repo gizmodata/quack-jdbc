@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-alpha.6] — 2026-07-29
+
+### Fixed
+
+- **Server error details on HTTP failures**: when the Quack server
+  rejects a request with a non-2xx status, the driver now includes the
+  server's `EXCEPTION_WHAT` response header (the underlying DuckDB
+  error, e.g. a serialization mismatch between client and server
+  versions) in the exception message instead of reporting only the bare
+  status code. Makes failures like the "HTTP 500" in gizmodata/quack-jdbc#5
+  self-diagnosing in DBeaver/DataGrip.
+
 ## [0.2.0-alpha.5] — 2026-07-27
 
 Nested-type support, the oracle parity harness, and the DML drain-loop
