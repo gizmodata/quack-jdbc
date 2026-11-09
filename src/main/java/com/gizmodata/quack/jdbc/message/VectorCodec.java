@@ -89,6 +89,8 @@ public final class VectorCodec {
             case CONSTANT -> broadcastConstant(reader, type, count);
             case DICTIONARY -> decodeDictionary(reader, type, count);
             case SEQUENCE -> decodeSequence(reader, type, count);
+            case SHREDDED -> throw new QuackUnsupportedTypeException(
+                    "Shredded VARIANT vectors are not supported; cast the column to JSON or VARCHAR in the query");
         };
     }
 
@@ -334,8 +336,9 @@ public final class VectorCodec {
 
         return switch (physicalType) {
             case VARCHAR -> {
-                List<byte[]> raw = reader.readRequiredField(102,
-                        () -> reader.readList(i -> reader.readStringBytes()));
+                List<byte[]> raw = !reader.eof() && reader.peekFieldId() == 107
+                        ? readSplitStrings(reader, count)
+                        : reader.readRequiredField(102, () -> reader.readList(i -> reader.readStringBytes()));
                 Object[] values = new Object[raw.size()];
                 for (int i = 0; i < raw.size(); i++) {
                     values[i] = Validity.isValid(validity, i) ? decodeStringLikeValue(type, raw.get(i)) : null;
@@ -360,9 +363,10 @@ public final class VectorCodec {
                     }
                     Map<String, Object> rowMap = new LinkedHashMap<>();
                     for (int c = 0; c < children.size(); c++) {
-                        rowMap.put(children.get(c).name(), childVectors.get(c).getObject(row));
+                        rowMap.put(structFieldKey(children, c), childVectors.get(c).getObject(row));
                     }
-                    values[row] = rowMap;
+                    // A VARIANT travels as DuckDB's storage struct; JDBC sees its JSON text.
+                    values[row] = type.id() == LogicalTypeId.VARIANT ? VariantJson.toJson(rowMap) : rowMap;
                 }
                 yield new DecodedVector.ObjectVec(type, values);
             }
@@ -416,6 +420,45 @@ public final class VectorCodec {
             default -> throw new QuackUnsupportedTypeException(
                     "Variable-width physical type " + physicalType + " is not supported");
         };
+    }
+
+    /**
+     * The row-map key of STRUCT child {@code i}: its name, or {@code "#i"}
+     * for the unnamed children of a DuckDB 2.0 TUPLE (all named "").
+     */
+    public static String structFieldKey(List<ChildType> children, int i) {
+        String name = children.get(i).name();
+        return name == null || name.isEmpty() ? "#" + i : name;
+    }
+
+    /**
+     * DuckDB 2.0's VARCHAR layout (storage version V2_0_0): field 107 the
+     * total byte length, 108 a blob of {@code count} little-endian uint32
+     * lengths (0 for NULL rows), 109 the concatenated bytes.
+     */
+    private static List<byte[]> readSplitStrings(BinaryReader reader, int count) {
+        long byteLength = reader.readRequiredField(107, reader::readUlebLong);
+        byte[] lengths = reader.readRequiredField(108, reader::readBlob);
+        byte[] data = reader.readRequiredField(109, reader::readBlob);
+        if (lengths.length != 4L * count || data.length != byteLength) {
+            throw new QuackProtocolException("VARCHAR vector: " + lengths.length + " length bytes for "
+                    + count + " rows, " + data.length + " data bytes (header says " + byteLength + ")");
+        }
+        java.nio.ByteBuffer lb = java.nio.ByteBuffer.wrap(lengths).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        List<byte[]> out = new ArrayList<>(count);
+        int pos = 0;
+        for (int i = 0; i < count; i++) {
+            long n = Integer.toUnsignedLong(lb.getInt(4 * i));
+            if (n > data.length - pos) {
+                throw new QuackProtocolException("VARCHAR vector: string " + i + " overruns the data blob");
+            }
+            out.add(java.util.Arrays.copyOfRange(data, pos, pos + (int) n));
+            pos += (int) n;
+        }
+        if (pos != data.length) {
+            throw new QuackProtocolException("VARCHAR vector: " + (data.length - pos) + " trailing data bytes");
+        }
+        return out;
     }
 
     private static Map<Object, Object> toMap(List<Object> entries) {
@@ -512,7 +555,7 @@ public final class VectorCodec {
     private static boolean needsObjectMaterialization(LogicalType type, PhysicalType physicalType) {
         return switch (type.id()) {
             case DECIMAL, DATE, TIME, TIME_NS, TIME_TZ,
-                 TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ,
+                 TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ, TIMESTAMP_TZ_NS,
                  UUID, INTERVAL, HUGEINT, UHUGEINT, ENUM -> true;
             default -> physicalType == PhysicalType.INTERVAL
                     || physicalType == PhysicalType.INT128
@@ -582,17 +625,38 @@ public final class VectorCodec {
         return switch (type.id()) {
             case TIME -> microsToLocalTime(value);
             case TIME_NS -> LocalTime.ofNanoOfDay(value);
-            case TIME_TZ -> value;
+            case TIME_TZ -> timeTzToOffsetTime(value);
             case TIMESTAMP_SEC -> LocalDateTime.ofInstant(Instant.ofEpochSecond(value), ZoneOffset.UTC);
             case TIMESTAMP_MS -> LocalDateTime.ofInstant(Instant.ofEpochMilli(value), ZoneOffset.UTC);
             case TIMESTAMP -> microsToLocalDateTime(value);
             case TIMESTAMP_NS -> LocalDateTime.ofInstant(
-                    Instant.ofEpochSecond(value / 1_000_000_000L, value % 1_000_000_000L), ZoneOffset.UTC);
+                    Instant.ofEpochSecond(Math.floorDiv(value, 1_000_000_000L), Math.floorMod(value, 1_000_000_000L)),
+                    ZoneOffset.UTC);
             case TIMESTAMP_TZ -> OffsetDateTime.ofInstant(microsToInstant(value), ZoneOffset.UTC);
+            case TIMESTAMP_TZ_NS -> OffsetDateTime.ofInstant(
+                    Instant.ofEpochSecond(Math.floorDiv(value, 1_000_000_000L), Math.floorMod(value, 1_000_000_000L)),
+                    ZoneOffset.UTC);
             case DECIMAL -> decimalFromUnscaled(type, BigInteger.valueOf(value));
             default -> value;
         };
     }
+
+    /**
+     * DuckDB's dtime_tz_t: time-of-day micros in the upper 40 bits and
+     * {@code MAX_OFFSET - offset_seconds} in the lower 24 (MAX_OFFSET = 15:59:59).
+     */
+    private static java.time.OffsetTime timeTzToOffsetTime(long bits) {
+        long micros = bits >>> 24;
+        int offsetSeconds = TIME_TZ_MAX_OFFSET - (int) (bits & 0xFFFFFFL);
+        return java.time.OffsetTime.of(microsToLocalTime(micros), ZoneOffset.ofTotalSeconds(offsetSeconds));
+    }
+
+    private static long offsetTimeToTimeTz(java.time.OffsetTime t) {
+        long micros = t.toLocalTime().toNanoOfDay() / 1_000L;
+        return (micros << 24) | (TIME_TZ_MAX_OFFSET - t.getOffset().getTotalSeconds());
+    }
+
+    private static final int TIME_TZ_MAX_OFFSET = 16 * 60 * 60 - 1;
 
     private static LocalTime microsToLocalTime(long micros) {
         long nanos = Math.multiplyExact(micros, 1_000L);
@@ -718,6 +782,10 @@ public final class VectorCodec {
 
     private static void encodeFlatVectorBody(BinaryWriter writer, LogicalType type, DecodedVector vector) {
         int count = vector.size();
+        if (type.id() == LogicalTypeId.GEOMETRY) {
+            // geometry_format = WKB; without it DuckDB reads the legacy spatial encoding.
+            writer.writeField(99, () -> writer.writeUleb(1));
+        }
         long[] validity = extractValidity(vector);
         boolean hasNulls = validity != null;
         writer.writeField(100, () -> writer.writeBool(hasNulls));
@@ -757,7 +825,9 @@ public final class VectorCodec {
                     throw new QuackProtocolException("Expected a map value for STRUCT row " + r
                             + ", got " + row.getClass().getName());
                 }
-                childValues[r] = (row instanceof Map<?, ?> m) ? m.get(child.name()) : null;
+                childValues[r] = (row instanceof Map<?, ?> m)
+                        ? (m.containsKey(child.name()) ? m.get(child.name()) : m.get(structFieldKey(children, ci)))
+                        : null;
             }
             encodeVector(writer, child.type(), new DecodedVector.ObjectVec(child.type(), childValues));
         }));
@@ -935,7 +1005,11 @@ public final class VectorCodec {
                 yield Math.multiplyExact(inst.getEpochSecond(), 1_000_000_000L) + inst.getNano();
             }
             case TIMESTAMP_TZ -> instantToMicros(((OffsetDateTime) value).toInstant());
-            case TIME_TZ -> ((Number) value).longValue();
+            case TIMESTAMP_TZ_NS -> {
+                Instant inst = ((OffsetDateTime) value).toInstant();
+                yield Math.multiplyExact(inst.getEpochSecond(), 1_000_000_000L) + inst.getNano();
+            }
+            case TIME_TZ -> value instanceof java.time.OffsetTime ot ? offsetTimeToTimeTz(ot) : ((Number) value).longValue();
             case DECIMAL -> decimalUnscaled(type, value).longValueExact();
             default -> ((Number) value).longValue();
         };

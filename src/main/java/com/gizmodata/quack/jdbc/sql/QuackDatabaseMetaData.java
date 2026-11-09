@@ -331,18 +331,25 @@ public final class QuackDatabaseMetaData implements DatabaseMetaData {
     @Override public String getURL() { return QuackUri.URL_PREFIX + "//" + connection.uri().host() + ":" + connection.uri().port(); }
     @Override public String getUserName() { return ""; }
     @Override public String getDatabaseProductName() { return "DuckDB (via Quack)"; }
-    @Override public String getDatabaseProductVersion() throws SQLException {
-        try (Statement s = connection.createStatement(); ResultSet rs = s.executeQuery("PRAGMA version")) {
-            if (rs.next()) return rs.getString(1);
-        }
-        return "";
+    /**
+     * The server's DuckDB version from the Quack handshake (no query: a
+     * query here would supersede a result the caller is still reading).
+     */
+    @Override public String getDatabaseProductVersion() {
+        return connection.session().serverVersion().orElse("");
     }
     @Override public String getDriverName() { return QuackDriver.DRIVER_NAME; }
-    @Override public String getDriverVersion() { return QuackDriver.MAJOR_VERSION + "." + QuackDriver.MINOR_VERSION; }
+    @Override public String getDriverVersion() { return QuackDriver.VERSION; }
     @Override public int getDriverMajorVersion() { return QuackDriver.MAJOR_VERSION; }
     @Override public int getDriverMinorVersion() { return QuackDriver.MINOR_VERSION; }
-    @Override public int getDatabaseMajorVersion() { return 1; }
-    @Override public int getDatabaseMinorVersion() { return 0; }
+    @Override public int getDatabaseMajorVersion() { return serverVersionPart(0, 2); }
+    @Override public int getDatabaseMinorVersion() { return serverVersionPart(1, 0); }
+
+    private int serverVersionPart(int index, int fallback) {
+        String v = connection.session().serverVersion().orElse("");
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)\\.(\\d+)").matcher(v);
+        return m.find() ? Integer.parseInt(m.group(index + 1)) : fallback;
+    }
     @Override public int getJDBCMajorVersion() { return 4; }
     @Override public int getJDBCMinorVersion() { return 2; }
     @Override public String getIdentifierQuoteString() { return "\""; }

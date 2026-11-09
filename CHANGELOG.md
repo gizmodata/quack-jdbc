@@ -6,6 +6,95 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-09
+
+The first stable release, for **DuckDB 2.0**. It speaks Quack protocol version 3, the one
+DuckDB 2.0 ships, mirroring [adbc-driver-quack](https://github.com/gizmodata/adbc-driver-quack)
+1.0.0.
+
+### Breaking
+
+- **DuckDB 2.0 only.** DuckDB 1.5's preview Quack (protocol version 1) is not compatible;
+  the handshake refuses it with a message saying so. **0.2.0-alpha.6 is the last release
+  for DuckDB 1.5**: pin `com.gizmodata:quack-jdbc:0.2.0-alpha.6` for those servers.
+- **TLS is on by default** for every host except `localhost`, `127.0.0.1` and `::1`, as in
+  DuckDB's own client (it was off by default). `tls=false` restores plain HTTP.
+- **`QuackSession.appendChunk` now streams with `SEND_DATA`** into
+  `INSERT INTO … SELECT * FROM scan_data_from_quack_client(…)` (protocol 3 has no
+  `APPEND_REQUEST`). It returns the inserted row count (`long`, was `void`), binds columns by
+  position, and an unqualified table name (a `null` schema) now also finds temporary tables.
+- **JDBC type codes match `duckdb_jdbc` 2.0**: BLOB and GEOMETRY report `BLOB`, BIT
+  `BIT`, FLOAT `FLOAT`, UTINYINT `SMALLINT`, USMALLINT `INTEGER`, UINTEGER `BIGINT`,
+  UBIGINT, HUGEINT, UHUGEINT, BIGNUM, VARIANT and TIMESTAMPTZ_NS `OTHER`, TIMETZ
+  `TIME_WITH_TIMEZONE`, and TIMESTAMPTZ's type name is `TIMESTAMP WITH TIME ZONE`.
+- **TIMETZ values are `java.time.OffsetTime`** (they were DuckDB's packed `long`).
+- `Statement.cancel()` now cancels on the server instead of doing nothing.
+- `getColumnClassName` reports `java.sql.Struct` / `java.sql.Array` for STRUCT and
+  LIST/ARRAY, matching what `getObject` returns.
+
+### Added
+
+- **Protocol 3 wire format**: the new header/body layout, FETCH and SEND_DATA chunk blobs,
+  and the new messages (SEND_DATA, CANCEL, HEARTBEAT, ACKNOWLEDGEMENT); ERROR_RESPONSE's
+  DuckDB exception type, extra info and `must_invalidate`.
+- **Heartbeat lease**: the handshake asks for a lease (`heartbeatTimeout`, 60 s by default)
+  and the driver renews it about every third of it, with jitter, so an idle connection
+  stays alive. A server that says the connection is gone fails later calls fast with
+  SQLSTATE `08003`.
+- **Cancel**: `Statement.cancel()` sends a Quack `CANCEL` for the running statement (the
+  call fails with SQLSTATE `57014`); a request that times out (`requestTimeout`) or whose
+  thread is interrupted is cancelled on the server too.
+- **SQLSTATEs**: server errors carry a SQLSTATE from DuckDB's exception type (`42S02`
+  missing table, `42S22` missing column, `42S01` already exists, `42601` syntax, `23000`
+  constraint, `22xxx` data, `25000` transaction state, `28000` authentication, `57014`
+  interrupted, ...) and the matching `SQLException` subclass
+  (`SQLSyntaxErrorException`, `SQLIntegrityConstraintViolationException`, ...). A bulk load
+  whose columns do not fit the table fails with `42S01`.
+- **TLS pinning**: `sslFingerprint` (alias `ssl_fingerprint`) accepts exactly the server
+  certificate with that SHA-256 fingerprint, which is how a self-signed `quack_serve`
+  certificate is trusted; the colon form and a `sha256:` prefix are accepted.
+- `clientId` and `heartbeatTimeout` connection properties; DuckDB's
+  `jdbc:quack:host:port` spelling.
+- **DuckDB 2.0 types**: TIMESTAMPTZ_NS (`OffsetDateTime` with nanoseconds), TUPLE (a
+  `java.sql.Struct`; unnamed fields are keyed `#0`, `#1`, … in nested maps), the new VARCHAR
+  vector layout, **VARIANT** returned as its JSON text, rendered in Java exactly as DuckDB's
+  `variant::JSON` prints it (keys sorted, yyjson number formatting, DuckDB's date/time,
+  interval and blob text), and **GEOMETRY** as WKB `byte[]` both ways. A shredded VARIANT
+  vector, or a VARIANT holding a GEOMETRY or BIGNUM, fails with an error naming it.
+- Query ids are random non-zero 128-bit values; FETCH asks for dense batch indexes from 1
+  with an acknowledgement index, and checks the terminal batch count, so a short stream is
+  an error, never a truncated result. DISCONNECT on close is bounded (5 s).
+- Starting a query while a `ResultSet` on the same connection still streams reads the rest
+  of that result into memory first (the server would otherwise drop it), so both stay usable.
+- `DatabaseMetaData.getDatabaseProductVersion()` and `getDatabaseMajorVersion()` come from
+  the handshake (no query); `getDriverVersion()` is the build's version.
+- `-Poracle` parity tests now run against `duckdb_jdbc` 2.0.0.1 and also compare
+  `getSchemas`, `getTables`, `getColumns`, `getPrimaryKeys`, `getImportedKeys` and
+  `getTableTypes` row for row.
+- GizmoData branding, a "Share data with Hardcharger" section with verified examples, and
+  POM metadata to match.
+
+### Fixed
+
+- The integration tests now **fail** instead of skipping when no DuckDB 2.0 CLI is on the
+  path (`QUACK_JDBC_TEST_DUCKDB` overrides it; it was `QUACK_IT_DUCKDB`), and the test
+  server counts as ready only after `quack_serve` reports its listen URL, not when anything
+  accepts connections on the port.
+
+### Changed
+
+- Dependencies: JUnit 5.10.2 → 6.1.3; `duckdb_jdbc` (oracle profile) 1.5.5.0 → 2.0.0.1.
+- Maven plugins: compiler 3.13.0 → 3.16.0, surefire 3.2.5 → 3.6.1 (with
+  `failIfNoTests`), jar 3.4.1 → 3.5.1, source 3.3.1 → 3.4.0, javadoc 3.10.0 → 3.12.0,
+  gpg 3.2.4 → 3.2.8, central-publishing 0.11.0 → 0.12.0; clean 3.5.0, resources 3.5.0 and
+  install 3.2.0 are now pinned.
+- CI: tests on JDK 17 and 25 (the bytecode still targets Java 17, which DBeaver and older
+  tools run on); releases build on JDK 25. The DuckDB CLI the tests use is pinned (v2.0.0,
+  from DuckDB's GitHub release). `actions/setup-java` v5 → v6. A concurrency block cancels
+  superseded runs (never a tag's), docs-only changes skip CI, and the CI runs the `-Poracle`
+  parity tests.
+- `Content-Type` and `Accept` are `application/vnd.duckdb`, as DuckDB 2.0 sends them.
+
 ## [0.2.0-alpha.6] — 2026-07-29
 
 ### Fixed

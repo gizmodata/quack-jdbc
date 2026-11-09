@@ -73,7 +73,7 @@ class QuackHttpTransportTest {
             exchange.getRequestBody().readAllBytes();
             byte[] response = MessageCodec.encode(new QuackMessage.SuccessResponse(
                     MessageHeader.of(MessageType.SUCCESS_RESPONSE).withClientQueryId(1)));
-            exchange.getResponseHeaders().add("Content-Type", "application/duckdb");
+            exchange.getResponseHeaders().add("Content-Type", "application/vnd.duckdb");
             exchange.sendResponseHeaders(200, response.length);
             try (java.io.OutputStream os = exchange.getResponseBody()) {
                 os.write(response);
@@ -187,7 +187,7 @@ class QuackHttpTransportTest {
             probe(QuackHttpTransport.from(uri));
 
             assertEquals("s3cret", seen.get().getFirst("X-Proxy-Auth"));
-            assertEquals("application/duckdb", seen.get().getFirst("Content-Type"),
+            assertEquals("application/vnd.duckdb", seen.get().getFirst("Content-Type"),
                     "protocol Content-Type must not be displaced by extra headers");
         } finally {
             server.stop(0);

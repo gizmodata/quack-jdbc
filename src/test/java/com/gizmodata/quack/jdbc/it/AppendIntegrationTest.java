@@ -11,7 +11,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -35,7 +34,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@EnabledIf("com.gizmodata.quack.jdbc.it.QuackIntegrationTest#duckdbAvailable")
 public class AppendIntegrationTest {
 
     private QuackServerFixture server;

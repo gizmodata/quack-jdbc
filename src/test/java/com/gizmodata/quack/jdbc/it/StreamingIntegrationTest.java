@@ -9,7 +9,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -18,6 +17,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,7 +36,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@EnabledIf("com.gizmodata.quack.jdbc.it.QuackIntegrationTest#duckdbAvailable")
 public class StreamingIntegrationTest {
 
     private QuackServerFixture server;
@@ -56,36 +55,70 @@ public class StreamingIntegrationTest {
         return (QuackConnection) DriverManager.getConnection(server.jdbcUrl());
     }
 
+    /**
+     * Small server batches, so a modest result spans many FETCH batches:
+     * DuckDB 2.0 cuts batches by bytes (quack_target_batch_bytes, 32 MiB by
+     * default) and inlines up to quack_prepare_inline_rows rows in PREPARE.
+     */
+    private static void useSmallBatches(Connection c) throws SQLException {
+        try (Statement s = c.createStatement()) {
+            s.execute("SET GLOBAL quack_target_batch_bytes = 65536");
+            s.execute("SET GLOBAL quack_prepare_inline_rows = 2048");
+        }
+    }
+
     @Test
     void cursorFetchesLazilyForLargeResult() throws Exception {
-        // 200k-row range query is large enough to exceed the server's
-        // default batch (quack_fetch_batch_chunks=12) but small enough to
-        // finish quickly. The cursor must not hold the whole thing in
-        // memory after the initial PREPARE_RESPONSE.
-        try (QuackConnection c = connect();
-             QuackSession.Cursor cursor = c.session().cursor("SELECT i FROM range(0, 200000) t(i)")) {
+        try (QuackConnection c = connect()) {
+            useSmallBatches(c);
+            // md5() keeps the batches incompressible (a bare range() is sent
+            // as tiny SEQUENCE vectors and fits in one batch).
+            try (QuackSession.Cursor cursor = c.session().cursor(
+                    "SELECT i, md5(i::VARCHAR) AS h FROM range(0, 200000) t(i)")) {
+                int initialRows = cursor.materializedRowCount();
+                assertTrue(initialRows > 0, "PREPARE_RESPONSE should include at least one initial chunk");
+                assertTrue(initialRows < 200_000,
+                        "cursor should not have materialized the full result up front; saw "
+                                + initialRows + " rows already");
+                assertTrue(cursor.hasMoreOnServer(), "the rest of the result should still be on the server");
 
-            int initialRows = cursor.materializedRowCount();
-            assertTrue(initialRows > 0,
-                    "PREPARE_RESPONSE should include at least one initial chunk");
-            assertTrue(initialRows < 200_000,
-                    "cursor should not have materialized the full result up front; saw "
-                            + initialRows + " rows already");
-
-            // Walk a handful of chunks and confirm the materialized counter
-            // increases monotonically (proves we're actually pulling more
-            // batches over the wire as we drain).
-            int prev = initialRows;
-            int rowsSeen = 0;
-            for (int i = 0; i < 8; i++) {
-                DataChunk chunk = cursor.nextChunk();
-                if (chunk == null) break;
-                rowsSeen += chunk.rowCount();
-                assertTrue(cursor.materializedRowCount() >= prev,
-                        "materializedRowCount should not decrease");
-                prev = cursor.materializedRowCount();
+                // Drain everything: many dense FETCH batches, then the
+                // terminal response whose total must match what arrived.
+                long expected = 0;
+                DataChunk chunk;
+                while ((chunk = cursor.nextChunk()) != null) {
+                    for (int r = 0; r < chunk.rowCount(); r++) {
+                        assertEquals(expected++, chunk.columns().get(0).getLong(r));
+                    }
+                }
+                assertEquals(200_000, expected);
+                assertEquals(200_000, cursor.materializedRowCount());
+                assertFalse(cursor.hasMoreOnServer());
             }
-            assertTrue(rowsSeen > 0);
+        }
+    }
+
+    @Test
+    void secondQueryWhileFirstStreamsKeepsBothResults() throws Exception {
+        // The server streams one result per connection; a new query would
+        // supersede an unfinished one. The driver buffers the first result
+        // before starting the second, so both ResultSets stay readable.
+        try (Connection c = connect()) {
+            useSmallBatches(c);
+            try (Statement s1 = c.createStatement(); Statement s2 = c.createStatement();
+                 ResultSet first = s1.executeQuery("SELECT i, md5(i::VARCHAR) FROM range(0, 50000) t(i)")) {
+                assertTrue(first.next());
+                assertEquals(0, first.getLong(1));
+                try (ResultSet second = s2.executeQuery("SELECT count(*) FROM range(0, 1234)")) {
+                    assertTrue(second.next());
+                    assertEquals(1234, second.getLong(1));
+                }
+                long expected = 1;
+                while (first.next()) {
+                    assertEquals(expected++, first.getLong(1));
+                }
+                assertEquals(50_000, expected);
+            }
         }
     }
 

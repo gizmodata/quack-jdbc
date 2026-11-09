@@ -61,15 +61,21 @@ public final class QuackResultSet extends SkeletalResultSet {
     public boolean next() throws SQLException {
         checkOpen();
         if (exhausted) return false;
-        if (currentChunk == null) {
-            currentChunk = cursor.nextChunk();
-            rowInChunk = 0;
-        } else {
-            rowInChunk++;
-        }
-        while (currentChunk != null && rowInChunk >= currentChunk.rowCount()) {
-            currentChunk = cursor.nextChunk();
-            rowInChunk = 0;
+        try {
+            if (currentChunk == null) {
+                currentChunk = cursor.nextChunk();
+                rowInChunk = 0;
+            } else {
+                rowInChunk++;
+            }
+            while (currentChunk != null && rowInChunk >= currentChunk.rowCount()) {
+                currentChunk = cursor.nextChunk();
+                rowInChunk = 0;
+            }
+        } catch (RuntimeException e) {
+            exhausted = true;
+            currentChunk = null;
+            throw QuackSqlExceptions.from(e);
         }
         if (currentChunk == null) {
             exhausted = true;
@@ -252,7 +258,7 @@ public final class QuackResultSet extends SkeletalResultSet {
         if ((id == LogicalTypeId.LIST || id == LogicalTypeId.ARRAY) && v instanceof List<?> list) {
             return new QuackArray(list, extractElementType(type));
         }
-        if (id == LogicalTypeId.STRUCT && v instanceof Map<?, ?> struct) {
+        if ((id == LogicalTypeId.STRUCT || id == LogicalTypeId.TUPLE) && v instanceof Map<?, ?> struct) {
             return toStruct(type, struct);
         }
         return v;
@@ -265,7 +271,7 @@ public final class QuackResultSet extends SkeletalResultSet {
             List<ChildType> children = info.childTypes();
             attributes = new Object[children.size()];
             for (int i = 0; i < children.size(); i++) {
-                attributes[i] = values.get(children.get(i).name());
+                attributes[i] = values.get(com.gizmodata.quack.jdbc.message.VectorCodec.structFieldKey(children, i));
             }
         } else {
             attributes = values.values().toArray();

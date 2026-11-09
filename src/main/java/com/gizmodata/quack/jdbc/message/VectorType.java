@@ -7,7 +7,9 @@ public enum VectorType {
     FSST(1),
     CONSTANT(2),
     DICTIONARY(3),
-    SEQUENCE(4);
+    SEQUENCE(4),
+    /** A VARIANT read from shredded storage (DuckDB 2.0). */
+    SHREDDED(5);
 
     private final int wireId;
 

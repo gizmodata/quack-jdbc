@@ -4,7 +4,11 @@ Project notes for Claude and other contributors.
 
 ## What this is
 
-A JDBC driver for [DuckDB's Quack remote protocol](https://duckdb.org/docs/current/quack/overview).
+A JDBC driver for [DuckDB's Quack remote protocol](https://duckdb.org/docs/current/quack/overview),
+protocol version 3 (DuckDB 2.0). 1.0.0 mirrors adbc-driver-quack 1.0.0
+(`gizmodata/adbc-driver-quack`, Go): when the protocol changes, port the Go
+driver's `internal/message`, `internal/transport` and `driver/quack/session.go`
+changes here. 0.2.0-alpha.6 was the last release for DuckDB 1.5 (protocol 1).
 Lets JVM tools (DBeaver, IntelliJ, dbt, Spark, etc.) connect to a remote
 DuckDB server with a familiar `jdbc:quack://host:port?token=…` URL.
 
@@ -48,28 +52,36 @@ done
 
 ```bash
 mvn package          # build
-mvn test             # unit + integration (needs duckdb on PATH)
-mvn -Dtest='!Quack*IntegrationTest' test    # unit only
+mvn verify           # unit + integration (needs the DuckDB 2.0 CLI on PATH)
+mvn -Poracle verify  # also parity with duckdb_jdbc (what CI runs)
+mvn -Dtest='!*IntegrationTest' test    # unit only
 ```
 
-Integration tests spawn a real DuckDB CLI as a Quack server. They auto-skip
-when `duckdb` isn't on PATH; override with `QUACK_IT_DUCKDB=/path/to/duckdb`.
+Integration tests spawn a real DuckDB 2.0 CLI as a Quack server on
+127.0.0.1 (`QuackServerFixture`; `startTls()` for HTTPS with a generated
+certificate). They FAIL, never skip, when no DuckDB 2.0 `duckdb` is on PATH:
+they gate releases. Override the binary with `QUACK_JDBC_TEST_DUCKDB`.
+CI pins the DuckDB CLI version (`DUCKDB_VERSION` in ci.yml); bump it with
+DuckDB releases.
+
+Protocol 3 facts that bit during the port:
+- The server streams one result per connection; a new PREPARE supersedes an
+  unfinished one ("Result has been closed"). `QuackSession` buffers the open
+  cursor before starting another query.
+- Server batches are cut by bytes (`quack_target_batch_bytes`, 32 MiB) and
+  PREPARE inlines up to `quack_prepare_inline_rows`; a bare `range()` is tiny
+  SEQUENCE vectors and fits one batch. Tests that need many batches set both
+  settings low and use incompressible data (`md5(i::VARCHAR)`).
+- VARIANT -> JSON must match DuckDB's `variant::JSON`: object keys sorted
+  bytewise, yyjson's double format. Reference source: DuckDB's
+  `src/function/cast/variant/to_json.cpp` at the 2.0 release.
 
 ## Quack extension version
 
-As of DuckDB v1.5.3 ("Variegata"), `quack` ships as a **core** signed
-extension — the integration fixture runs `INSTALL quack; LOAD quack;`
-against a stock `duckdb` binary (no `-unsigned`, no `core_nightly`).
-For pre-1.5.3 DuckDB builds, use `INSTALL quack FROM core_nightly` with
-`duckdb -unsigned`.
-
-The wire format was clean-room ported from the TypeScript reference
-(`@quack-protocol/sdk`) at upstream commit
-`daae4826f57986fbb6cc2116316f89c673814b23` (2026-05-10; upstream has
-since squashed its history — the wire-format sources are unchanged as of
-upstream HEAD `12018799`, 2026-05-20). The full driver suite (98 tests)
-currently passes against DuckDB v1.5.3's bundled `quack`. Re-verify when
-DuckDB cuts a new patch release.
+`quack` is a core extension of DuckDB 2.0; the fixture runs
+`INSTALL quack; LOAD quack;` against a stock `duckdb` 2.0 binary. The driver
+was ported to protocol 3 against DuckDB v2.0.0 (`d54cbbe3df`). Re-run the
+full suite (with `-Poracle`) when DuckDB cuts a new release.
 
 ## DBeaver metadata reference
 
@@ -92,15 +104,16 @@ cross-reference DuckDB's `src/main/java/org/duckdb/DuckDBDatabaseMetaData.java`.
 
 ## Release process
 
-1. Verify `mvn test` is green on all targets in CI.
-2. Bump `version` in `pom.xml`, update `CHANGELOG.md`, commit.
-3. Tag `vX.Y.Z` and push the tag. CI publishes to Maven Central on tagged
-   commits to `main`.
+1. Verify CI is green on `main` (both JDK jobs present and passing).
+2. Bump `version` in `pom.xml`, move `[Unreleased]` in `CHANGELOG.md` into a
+   `## [X.Y.Z] - YYYY-MM-DD` section, merge to `main` through a PR.
+3. Tag `vX.Y.Z` on the merged `main` commit and push the tag. The tag's CI
+   run tests that commit, publishes to Maven Central only if the tests
+   pass, then creates the GitHub Release from the CHANGELOG section.
+4. Confirm the version on repo1.maven.org and the GitHub Release.
 
 ## Roadmap
 
-- APPEND_REQUEST encoder + a streaming `appendChunk()` API
-- FSST vector decoding
-- Full `java.sql.Array` / `java.sql.Struct` wrapping for nested types
-- Native PREPARE_REQUEST parameter binding once the protocol surfaces it
-- Companion ADBC driver in Go (same wire codec layer ported)
+- FSST vector decoding (if servers start sending it)
+- Native parameter binding once the Quack protocol carries bind values
+- Recursive `java.sql.Array` / `java.sql.Struct` wrapping for nested elements

@@ -127,7 +127,7 @@ class QuackConnectionTransactionTest {
                         MessageHeader.of(MessageType.CONNECTION_RESPONSE)
                                 .withConnectionId("tx-test")
                                 .withClientQueryId(clientQueryId),
-                        Optional.empty(), Optional.empty(), Optional.empty());
+                        Optional.empty(), Optional.empty(), 3L, 60L);
             }
             if (request instanceof QuackMessage.PrepareRequest prepare) {
                 statements.add(prepare.sql());

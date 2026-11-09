@@ -1,12 +1,10 @@
 package com.gizmodata.quack.jdbc.it;
 
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.sql.Array;
 import java.sql.Connection;
@@ -24,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@EnabledIf("com.gizmodata.quack.jdbc.it.QuackIntegrationTest#duckdbAvailable")
 public class GetObjectWrapperIntegrationTest {
 
     private QuackServerFixture server;
@@ -106,7 +103,7 @@ public class GetObjectWrapperIntegrationTest {
     @Test
     @Tag("oracle")
     void getObjectWrapperCategoriesMatchOracle() throws Exception {
-        Assumptions.assumeTrue(DuckDbOracle.available(),
+        org.junit.jupiter.api.Assertions.assertTrue(DuckDbOracle.available(),
                 "duckdb_jdbc driver not on the test classpath (run with -Poracle)");
         String[] queries = {
                 "SELECT [10, 20, 30]::INTEGER[] AS a",
