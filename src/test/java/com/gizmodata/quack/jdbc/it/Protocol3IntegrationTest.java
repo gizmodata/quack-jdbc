@@ -345,6 +345,122 @@ class Protocol3IntegrationTest {
         }
     }
 
+    /** The README's type table: what getObject returns and the JDBC type code for each DuckDB type. */
+    @Test
+    void readmeTypeTable() throws Exception {
+        Object[][] cases = {
+                {"true", Boolean.class, java.sql.Types.BOOLEAN},
+                {"1::TINYINT", Byte.class, java.sql.Types.TINYINT},
+                {"1::SMALLINT", Short.class, java.sql.Types.SMALLINT},
+                {"1::INTEGER", Integer.class, java.sql.Types.INTEGER},
+                {"1::BIGINT", Long.class, java.sql.Types.BIGINT},
+                {"1.5::FLOAT", Float.class, java.sql.Types.FLOAT},
+                {"1.5::DOUBLE", Double.class, java.sql.Types.DOUBLE},
+                {"1::UTINYINT", Short.class, java.sql.Types.SMALLINT},
+                {"1::USMALLINT", Integer.class, java.sql.Types.INTEGER},
+                {"1::UINTEGER", Long.class, java.sql.Types.BIGINT},
+                {"1::UBIGINT", Long.class, java.sql.Types.OTHER},
+                {"1::HUGEINT", java.math.BigInteger.class, java.sql.Types.OTHER},
+                {"1::UHUGEINT", java.math.BigInteger.class, java.sql.Types.OTHER},
+                {"1.5::DECIMAL(5,2)", java.math.BigDecimal.class, java.sql.Types.DECIMAL},
+                {"'x'", String.class, java.sql.Types.VARCHAR},
+                {"'x'::BLOB", byte[].class, java.sql.Types.BLOB},
+                {"'0101'::BIT", byte[].class, java.sql.Types.BIT},
+                {"'POINT(1 2)'::GEOMETRY", byte[].class, java.sql.Types.BLOB},
+                {"uuid()", UUID.class, java.sql.Types.OTHER},
+                {"DATE '2024-01-01'", java.time.LocalDate.class, java.sql.Types.DATE},
+                {"TIME '01:02:03'", java.time.LocalTime.class, java.sql.Types.TIME},
+                {"'01:02:03'::TIME_NS", java.time.LocalTime.class, java.sql.Types.TIME},
+                {"TIMETZ '01:02:03+05'", OffsetTime.class, java.sql.Types.TIME_WITH_TIMEZONE},
+                {"'2024-01-01'::TIMESTAMP_S", LocalDateTime.class, java.sql.Types.TIMESTAMP},
+                {"'2024-01-01'::TIMESTAMP_MS", LocalDateTime.class, java.sql.Types.TIMESTAMP},
+                {"TIMESTAMP '2024-01-01'", LocalDateTime.class, java.sql.Types.TIMESTAMP},
+                {"'2024-01-01'::TIMESTAMP_NS", LocalDateTime.class, java.sql.Types.TIMESTAMP},
+                {"TIMESTAMPTZ '2024-01-01 00:00:00+00'", OffsetDateTime.class, java.sql.Types.TIMESTAMP_WITH_TIMEZONE},
+                {"'2024-01-01 00:00:00+00'::TIMESTAMPTZ_NS", OffsetDateTime.class, java.sql.Types.OTHER},
+                {"INTERVAL 1 DAY", com.gizmodata.quack.jdbc.message.IntervalValue.class, java.sql.Types.OTHER},
+                {"1::VARIANT", String.class, java.sql.Types.OTHER},
+                {"[1, 2]", java.sql.Array.class, java.sql.Types.ARRAY},
+                {"[1, 2]::INTEGER[2]", java.sql.Array.class, java.sql.Types.ARRAY},
+                {"{'a': 1}", java.sql.Struct.class, java.sql.Types.STRUCT},
+                {"(1, 'a')", java.sql.Struct.class, java.sql.Types.STRUCT},
+                {"MAP {1: 'a'}", Map.class, java.sql.Types.OTHER},
+        };
+        List<String> wrong = new ArrayList<>();
+        try (Connection c = connect(); Statement s = c.createStatement()) {
+            s.execute("CREATE TYPE IF NOT EXISTS p3_mood AS ENUM ('x', 'y')");
+            for (Object[] row : cases) {
+                try (ResultSet rs = s.executeQuery("SELECT " + row[0])) {
+                    assertTrue(rs.next());
+                    Object v = rs.getObject(1);
+                    int type = rs.getMetaData().getColumnType(1);
+                    if (row[1] != null && !((Class<?>) row[1]).isInstance(v)) {
+                        wrong.add(row[0] + ": getObject is " + (v == null ? "null" : v.getClass().getName()));
+                    }
+                    if (type != (int) row[2]) wrong.add(row[0] + ": getColumnType is " + type);
+                }
+            }
+            try (ResultSet rs = s.executeQuery("SELECT 'x'::p3_mood")) {
+                assertTrue(rs.next());
+                assertEquals("x", rs.getObject(1));
+                assertEquals(java.sql.Types.OTHER, rs.getMetaData().getColumnType(1));
+            }
+            try (ResultSet rs = s.executeQuery("SELECT (1, 'a') AS t")) {
+                assertTrue(rs.next());
+                Object[] attrs = ((java.sql.Struct) rs.getObject(1)).getAttributes();
+                assertEquals(List.of(1, "a"), List.of(attrs));
+            }
+            try (ResultSet rs = s.executeQuery("SELECT [(1, 'a')] AS t")) {
+                assertTrue(rs.next());
+                Object[] items = (Object[]) ((java.sql.Array) rs.getObject(1)).getArray();
+                assertEquals(Map.of("#0", 1, "#1", "a"), items[0]);
+            }
+        }
+        assertEquals(List.of(), wrong);
+    }
+
+    @Test
+    void requestTimeoutCancelsTheStatementOnTheServer() throws Exception {
+        String marker = "p3_timeout_marker";
+        String longQuery = "SELECT sum(a.i * b.i) AS " + marker
+                + " FROM range(0, 1000000) a(i), range(0, 1000000) b(i)";
+        String running = "SELECT count(*) FROM quack_active_connections() WHERE query LIKE '%" + marker
+                + "%' AND query NOT LIKE '%quack_active_connections%'";
+        Properties props = new Properties();
+        props.setProperty("requestTimeout", "3");
+        try (Connection c = DriverManager.getConnection(server.jdbcUrl(), props); Statement s = c.createStatement();
+             Connection watch = connect(); Statement w = watch.createStatement()) {
+            CompletableFuture<SQLException> run = CompletableFuture.supplyAsync(() -> {
+                try (ResultSet rs = s.executeQuery(longQuery)) {
+                    return null;
+                } catch (SQLException e) {
+                    return e;
+                }
+            });
+            // Precondition: the server lists the statement while it runs
+            // (so the check below can see it).
+            assertTrue(waitFor(w, running, n -> n > 0), "the long statement never showed up on the server");
+            SQLException e = run.get(30, TimeUnit.SECONDS);
+            assertNotNull(e, "the statement should have timed out");
+            assertTrue(e.getMessage().contains("timed out"), e.getMessage());
+            // With the timed-out connection still open, the server must stop the statement.
+            assertTrue(waitFor(w, running, n -> n == 0), "the timed-out statement is still running on the server");
+        }
+    }
+
+    private static boolean waitFor(Statement w, String countSql, java.util.function.LongPredicate done)
+            throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (System.nanoTime() < deadline) {
+            try (ResultSet rs = w.executeQuery(countSql)) {
+                assertTrue(rs.next());
+                if (done.test(rs.getLong(1))) return true;
+            }
+            Thread.sleep(100);
+        }
+        return false;
+    }
+
     // ---- SQLSTATEs ----
 
     @Test
