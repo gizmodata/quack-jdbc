@@ -92,8 +92,11 @@ class QuackDriverCustomTransportTest {
         assertEquals("tokenEnv", propertyInfo[2].name);
         assertEquals("tokenFile", propertyInfo[3].name);
         assertEquals("tls", propertyInfo[4].name);
-        assertEquals("connectTimeout", propertyInfo[5].name);
-        assertEquals("requestTimeout", propertyInfo[6].name);
+        assertEquals("sslFingerprint", propertyInfo[5].name);
+        assertEquals("heartbeatTimeout", propertyInfo[6].name);
+        assertEquals("clientId", propertyInfo[7].name);
+        assertEquals("connectTimeout", propertyInfo[8].name);
+        assertEquals("requestTimeout", propertyInfo[9].name);
     }
 
     @Test
@@ -126,9 +129,7 @@ class QuackDriverCustomTransportTest {
                         MessageHeader.of(MessageType.CONNECTION_RESPONSE)
                                 .withConnectionId(connectionId)
                                 .withClientQueryId(clientQueryId),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty());
+                        Optional.empty(), Optional.empty(), 3L, 60L);
             }
             if (request instanceof QuackMessage.DisconnectMessage) {
                 long clientQueryId = request.header().clientQueryId().orElse(0L);

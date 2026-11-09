@@ -26,7 +26,7 @@ import java.util.Optional;
 
 /**
  * HTTP transport for the Quack protocol. Sends Quack messages as
- * {@code application/duckdb} request bodies to {@code POST /quack} and
+ * {@code application/vnd.duckdb} request bodies to {@code POST /quack} and
  * returns the decoded server response (or raises a
  * {@link QuackServerException} for {@code ERROR_RESPONSE}).
  *
@@ -70,9 +70,10 @@ public final class QuackHttpTransport implements QuackTransport {
     }
 
     public static QuackHttpTransport from(QuackUri uri) {
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(uri.connectTimeout())
-                .build();
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(uri.connectTimeout());
+        uri.sslFingerprint().ifPresent(fp -> builder.sslContext(PinnedTrustManager.sslContext(fp)));
+        HttpClient client = builder.build();
         return new QuackHttpTransport(uri.httpUri(), client, uri.requestTimeout(),
                 uri.extraHttpHeaders());
     }
@@ -130,7 +131,8 @@ public final class QuackHttpTransport implements QuackTransport {
             }
             QuackMessage decoded = MessageCodec.decode(response.body());
             if (decoded instanceof QuackMessage.ErrorResponse err) {
-                throw new QuackServerException(err.message());
+                throw new QuackServerException(err.message(), err.exceptionType(), err.extraInfo(),
+                        err.mustInvalidate());
             }
             return decoded;
         }

@@ -14,9 +14,35 @@ import java.util.logging.Logger;
 
 public final class QuackDriver implements Driver {
 
-    public static final int MAJOR_VERSION = 0;
-    public static final int MINOR_VERSION = 1;
+    /** This driver's version, e.g. {@code 1.0.0} (from the build). */
+    public static final String VERSION = loadVersion();
+    public static final int MAJOR_VERSION = versionPart(0);
+    public static final int MINOR_VERSION = versionPart(1);
     public static final String DRIVER_NAME = "quack-jdbc";
+
+    private static String loadVersion() {
+        try (java.io.InputStream in = QuackDriver.class.getResourceAsStream(
+                "/com/gizmodata/quack/jdbc/quack-jdbc.properties")) {
+            if (in != null) {
+                Properties p = new Properties();
+                p.load(in);
+                String v = p.getProperty("version", "");
+                if (!v.isEmpty() && !v.startsWith("$")) return v;
+            }
+        } catch (java.io.IOException ignored) {
+            // fall through
+        }
+        return "0.0.0-dev";
+    }
+
+    private static int versionPart(int i) {
+        String[] parts = VERSION.split("[.-]");
+        try {
+            return i < parts.length ? Integer.parseInt(parts[i]) : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
 
     static {
         try {
@@ -40,7 +66,7 @@ public final class QuackDriver implements Driver {
             QuackUri parsed = QuackUri.parse(url, info != null ? info : new Properties());
             return new QuackConnection(parsed, transportFactory);
         } catch (RuntimeException e) {
-            throw new SQLException(e.getMessage(), e);
+            throw QuackSqlExceptions.from(e);
         }
     }
 
@@ -70,8 +96,8 @@ public final class QuackDriver implements Driver {
         tokenFile.description = "Path to a local file containing the Quack authentication token.";
         tokenFile.required = false;
 
-        DriverPropertyInfo tls = new DriverPropertyInfo("tls", info != null ? info.getProperty("tls", "false") : "false");
-        tls.description = "Use HTTPS for the Quack transport (default: false).";
+        DriverPropertyInfo tls = new DriverPropertyInfo("tls", info != null ? info.getProperty("tls") : null);
+        tls.description = "Use HTTPS for the Quack transport (default: on, except for localhost, 127.0.0.1 and ::1).";
         tls.choices = new String[]{"true", "false"};
         tls.required = false;
 
@@ -85,8 +111,26 @@ public final class QuackDriver implements Driver {
         requestTimeout.description = "Per-request HTTP timeout as seconds or ISO-8601 duration (default: 60 seconds).";
         requestTimeout.required = false;
 
+        DriverPropertyInfo sslFingerprint = new DriverPropertyInfo("sslFingerprint",
+                info != null ? info.getProperty("sslFingerprint") : null);
+        sslFingerprint.description = "Pin the server's TLS certificate by its SHA-256 fingerprint"
+                + " (accepts a self-signed certificate; implies tls=true).";
+        sslFingerprint.required = false;
+
+        DriverPropertyInfo heartbeatTimeout = new DriverPropertyInfo("heartbeatTimeout",
+                info != null ? info.getProperty("heartbeatTimeout") : null);
+        heartbeatTimeout.description = "Connection lease requested from the server, as seconds or ISO-8601"
+                + " duration (default: 60 seconds); the driver renews it about every third of it.";
+        heartbeatTimeout.required = false;
+
+        DriverPropertyInfo clientId = new DriverPropertyInfo("clientId",
+                info != null ? info.getProperty("clientId") : null);
+        clientId.description = "Client id sent in the handshake (at least 4 characters).";
+        clientId.required = false;
+
         return new DriverPropertyInfo[]{
-                token, password, tokenEnv, tokenFile, tls, connectTimeout, requestTimeout
+                token, password, tokenEnv, tokenFile, tls, sslFingerprint, heartbeatTimeout, clientId,
+                connectTimeout, requestTimeout
         };
     }
 

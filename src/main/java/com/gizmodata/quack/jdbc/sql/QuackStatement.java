@@ -1,6 +1,5 @@
 package com.gizmodata.quack.jdbc.sql;
 
-import com.gizmodata.quack.jdbc.QuackException;
 import com.gizmodata.quack.jdbc.message.DataChunk;
 import com.gizmodata.quack.jdbc.type.LogicalTypeId;
 
@@ -51,12 +50,19 @@ public class QuackStatement extends SkeletalStatement {
         return counts;
     }
 
+    /**
+     * Interrupt the statement running on this connection: sends a Quack
+     * {@code CANCEL} for it, and the interrupted call fails with SQLSTATE
+     * 57014. A no-op when nothing is running.
+     */
     @Override
-    public void cancel() {
-        // Quack protocol has no in-flight cancel today. Treat as best-effort
-        // no-op so tools like DBeaver / DataGrip query-timeout buttons don't
-        // see an exception. A real cancel will follow when the protocol
-        // adds support.
+    public void cancel() throws SQLException {
+        if (closed) throw new SQLException("Statement is closed");
+        try {
+            connection.session().cancelActive();
+        } catch (RuntimeException e) {
+            throw QuackSqlExceptions.from(e);
+        }
     }
 
     @Override
@@ -84,11 +90,15 @@ public class QuackStatement extends SkeletalStatement {
         checkOpen();
         connection.beginTransactionIfNeeded();
         try {
+            if (currentResultSet != null) {
+                currentResultSet.close();
+                currentResultSet = null;
+            }
             QuackSession.Cursor cursor = connection.session().cursor(sql);
-            DataChunk first = cursor.peekFirstChunk();
-            if (looksLikeRowsAffected(cursor, first)) {
-                updateCount = extractRowsAffected(first);
+            if (looksLikeRowsAffected(cursor)) {
+                List<DataChunk> chunks = cursor.drainAll();
                 cursor.close();
+                updateCount = extractRowsAffected(chunks);
                 currentResultSet = null;
                 return false;
             }
@@ -96,14 +106,11 @@ public class QuackStatement extends SkeletalStatement {
             currentResultSet = new QuackResultSet(this, cursor);
             return true;
         } catch (RuntimeException e) {
-            if (e instanceof QuackException) {
-                throw new SQLException(e.getMessage(), e);
-            }
-            throw new SQLException("Failed to execute SQL: " + sql, e);
+            throw QuackSqlExceptions.from(e);
         }
     }
 
-    private boolean looksLikeRowsAffected(QuackSession.Cursor cursor, DataChunk first) {
+    private boolean looksLikeRowsAffected(QuackSession.Cursor cursor) {
         if (cursor.columnNames().size() != 1) return false;
         String name = cursor.columnNames().get(0);
         if (!"Count".equalsIgnoreCase(name) && !"rows_affected".equalsIgnoreCase(name)) {
@@ -113,18 +120,22 @@ public class QuackStatement extends SkeletalStatement {
         LogicalTypeId id = cursor.columnTypes().get(0).id();
         return (id == LogicalTypeId.BIGINT || id == LogicalTypeId.INTEGER
                 || id == LogicalTypeId.UBIGINT || id == LogicalTypeId.UINTEGER)
-                && first != null
-                && first.rowCount() <= 1;
+                && (first(cursor) == null || first(cursor).rowCount() <= 1);
     }
 
-    private int extractRowsAffected(DataChunk chunk) {
-        if (chunk == null || chunk.rowCount() == 0 || chunk.columns().isEmpty()) return 0;
-        Object value = chunk.columns().get(0).getObject(0);
-        if (value instanceof Number n) {
-            long v = n.longValue();
-            return v > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) v;
+    private static DataChunk first(QuackSession.Cursor cursor) {
+        return cursor.peekFirstChunk();
+    }
+
+    private int extractRowsAffected(List<DataChunk> chunks) {
+        long total = 0;
+        for (DataChunk chunk : chunks) {
+            if (chunk.columns().isEmpty()) continue;
+            for (int r = 0; r < chunk.rowCount(); r++) {
+                if (chunk.columns().get(0).getObject(r) instanceof Number n) total += n.longValue();
+            }
         }
-        return 0;
+        return total > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) total;
     }
 
     @Override

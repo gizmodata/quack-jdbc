@@ -31,6 +31,8 @@ public enum LogicalTypeId {
     UINTEGER(30),
     UBIGINT(31),
     TIMESTAMP_TZ(32),
+    /** DuckDB 2.0: TIMESTAMPTZ_NS. */
+    TIMESTAMP_TZ_NS(33),
     TIME_TZ(34),
     TIME_NS(35),
     BIT(36),
@@ -52,7 +54,9 @@ public enum LogicalTypeId {
     LAMBDA(106),
     UNION(107),
     ARRAY(108),
-    VARIANT(109);
+    VARIANT(109),
+    /** DuckDB 2.0: a STRUCT whose children are unnamed. */
+    TUPLE(110);
 
     private final int wireId;
 

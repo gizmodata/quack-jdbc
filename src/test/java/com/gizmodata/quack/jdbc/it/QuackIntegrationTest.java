@@ -5,7 +5,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -38,21 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@EnabledIf("duckdbAvailable")
 public class QuackIntegrationTest {
-
-    static boolean duckdbAvailable() {
-        String pathEnv = System.getenv("PATH");
-        if (pathEnv == null) return false;
-        String binary = System.getenv().getOrDefault("QUACK_IT_DUCKDB", "duckdb");
-        for (String entry : pathEnv.split(java.io.File.pathSeparator)) {
-            java.nio.file.Path candidate = java.nio.file.Path.of(entry, binary);
-            if (java.nio.file.Files.isExecutable(candidate)) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     private QuackServerFixture server;
 

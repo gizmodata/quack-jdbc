@@ -1,12 +1,10 @@
 package com.gizmodata.quack.jdbc.it;
 
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -32,7 +30,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @Tag("integration")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@EnabledIf("com.gizmodata.quack.jdbc.it.QuackIntegrationTest#duckdbAvailable")
 public class SqlLiteralRoundTripIntegrationTest {
 
     private QuackServerFixture server;
@@ -114,7 +111,7 @@ public class SqlLiteralRoundTripIntegrationTest {
     @Test
     @Tag("oracle")
     void resultsMatchOracleForBoundParameters() throws Exception {
-        Assumptions.assumeTrue(DuckDbOracle.available(),
+        org.junit.jupiter.api.Assertions.assertTrue(DuckDbOracle.available(),
                 "duckdb_jdbc driver not on the test classpath (run with -Poracle)");
         Object[] params = {
                 42, 9_000_000_000L, 2.5d, new BigDecimal("12.34"),

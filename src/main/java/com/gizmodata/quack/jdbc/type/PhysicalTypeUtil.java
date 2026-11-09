@@ -19,7 +19,7 @@ public final class PhysicalTypeUtil {
             case SQLNULL, DATE, INTEGER -> PhysicalType.INT32;
             case UINTEGER -> PhysicalType.UINT32;
             case BIGINT, TIME, TIME_NS, TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_NS,
-                 TIMESTAMP_MS, TIME_TZ, TIMESTAMP_TZ -> PhysicalType.INT64;
+                 TIMESTAMP_MS, TIME_TZ, TIMESTAMP_TZ, TIMESTAMP_TZ_NS -> PhysicalType.INT64;
             case UBIGINT -> PhysicalType.UINT64;
             case UHUGEINT -> PhysicalType.UINT128;
             case HUGEINT, UUID -> PhysicalType.INT128;
@@ -28,7 +28,7 @@ public final class PhysicalTypeUtil {
             case DECIMAL -> getDecimalPhysicalType(type);
             case BIGNUM, VARCHAR, CHAR, BLOB, BIT, TYPE, AGGREGATE_STATE, GEOMETRY -> PhysicalType.VARCHAR;
             case INTERVAL -> PhysicalType.INTERVAL;
-            case UNION, VARIANT, STRUCT -> PhysicalType.STRUCT;
+            case UNION, VARIANT, STRUCT, TUPLE -> PhysicalType.STRUCT;
             case LIST, MAP -> PhysicalType.LIST;
             case ARRAY -> PhysicalType.ARRAY;
             case POINTER -> PhysicalType.UINT64;

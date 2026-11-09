@@ -12,29 +12,35 @@ public final class JdbcTypeMap {
     private JdbcTypeMap() {
     }
 
+    /**
+     * The {@link Types} code for a DuckDB type, matching DuckDB's own JDBC
+     * driver (checked by the {@code -Poracle} parity tests) so tools see the
+     * same column types through either driver.
+     */
     public static int toJdbcType(LogicalType type) {
         return switch (type.id()) {
             case BOOLEAN -> Types.BOOLEAN;
-            case TINYINT, UTINYINT -> Types.TINYINT;
-            case SMALLINT, USMALLINT -> Types.SMALLINT;
-            case INTEGER, UINTEGER -> Types.INTEGER;
-            case BIGINT, UBIGINT, HUGEINT, UHUGEINT -> Types.BIGINT;
-            case FLOAT -> Types.REAL;
+            case TINYINT -> Types.TINYINT;
+            case SMALLINT, UTINYINT -> Types.SMALLINT;
+            case INTEGER, USMALLINT -> Types.INTEGER;
+            case BIGINT, UINTEGER -> Types.BIGINT;
+            case UBIGINT, HUGEINT, UHUGEINT, BIGNUM -> Types.OTHER;
+            case FLOAT -> Types.FLOAT;
             case DOUBLE -> Types.DOUBLE;
             case DECIMAL -> Types.DECIMAL;
             case CHAR -> Types.CHAR;
-            case VARCHAR, STRING_LITERAL, BIGNUM -> Types.VARCHAR;
-            case BLOB, BIT, GEOMETRY -> Types.BINARY;
+            case VARCHAR, STRING_LITERAL -> Types.VARCHAR;
+            case BLOB, GEOMETRY -> Types.BLOB;
+            case BIT -> Types.BIT;
             case DATE -> Types.DATE;
-            case TIME, TIME_NS, TIME_TZ -> Types.TIME;
+            case TIME, TIME_NS -> Types.TIME;
+            case TIME_TZ -> Types.TIME_WITH_TIMEZONE;
             case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS -> Types.TIMESTAMP;
             case TIMESTAMP_TZ -> Types.TIMESTAMP_WITH_TIMEZONE;
-            case INTERVAL -> Types.OTHER;
-            case UUID -> Types.OTHER;
-            case ENUM -> Types.OTHER;
-            case STRUCT -> Types.STRUCT;
+            // VARIANT values are returned as their JSON text.
+            case TIMESTAMP_TZ_NS, VARIANT, INTERVAL, UUID, ENUM, MAP -> Types.OTHER;
+            case STRUCT, TUPLE -> Types.STRUCT;
             case LIST, ARRAY -> Types.ARRAY;
-            case MAP -> Types.OTHER;
             case SQLNULL -> Types.NULL;
             default -> Types.OTHER;
         };
@@ -42,6 +48,11 @@ public final class JdbcTypeMap {
 
     public static String typeName(LogicalType type) {
         return typeName(type, false);
+    }
+
+    /** The type as DuckDB SQL spells it (an ENUM with its values), for CAST and column definitions. */
+    public static String sqlTypeName(LogicalType type) {
+        return typeName(type, true);
     }
 
     private static String typeName(LogicalType type, boolean nested) {
@@ -76,11 +87,14 @@ public final class JdbcTypeMap {
             case TIMESTAMP_SEC -> "TIMESTAMP_S";
             case TIMESTAMP_MS -> "TIMESTAMP_MS";
             case TIMESTAMP_NS -> "TIMESTAMP_NS";
-            case TIMESTAMP_TZ -> "TIMESTAMPTZ";
+            case TIMESTAMP_TZ -> "TIMESTAMP WITH TIME ZONE";
+            case TIMESTAMP_TZ_NS -> "TIMESTAMPTZ_NS";
             case INTERVAL -> "INTERVAL";
             case UUID -> "UUID";
             case ENUM -> nested ? enumTypeName(type) : "ENUM";
             case STRUCT -> structTypeName(type);
+            case TUPLE -> tupleTypeName(type);
+            case VARIANT -> "VARIANT";
             case LIST -> type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.ListInfo)
                     .map(i -> (ExtraTypeInfo.ListInfo) i)
                     .map(l -> typeName(l.childType(), true) + "[]")
@@ -111,6 +125,15 @@ public final class JdbcTypeMap {
                         .map(ct -> quoteIdentifier(ct.name()) + " " + typeName(ct.type(), true))
                         .collect(Collectors.joining(", ", "STRUCT(", ")")))
                 .orElse("STRUCT");
+    }
+
+    private static String tupleTypeName(LogicalType type) {
+        return type.typeInfo().filter(i -> i instanceof ExtraTypeInfo.StructInfo)
+                .map(i -> (ExtraTypeInfo.StructInfo) i)
+                .map(s -> s.childTypes().stream()
+                        .map(ct -> typeName(ct.type(), true))
+                        .collect(Collectors.joining(", ", "TUPLE(", ")")))
+                .orElse("TUPLE");
     }
 
     private static String mapTypeName(LogicalType type) {
@@ -150,7 +173,7 @@ public final class JdbcTypeMap {
             case CHAR, VARCHAR, BLOB, BIT, GEOMETRY -> Integer.MAX_VALUE;
             case DATE -> 10;
             case TIME, TIME_NS, TIME_TZ -> 18;
-            case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ -> 29;
+            case TIMESTAMP, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ, TIMESTAMP_TZ_NS -> 35;
             case UUID -> 36;
             default -> Integer.MAX_VALUE;
         };

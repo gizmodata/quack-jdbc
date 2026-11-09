@@ -27,7 +27,56 @@ class QuackUriTest {
         assertEquals("duck.example.com", u.host());
         assertEquals(9494, u.port());
         assertTrue(u.database().isEmpty());
-        assertFalse(u.tls());
+        // DuckDB's default: TLS for every host except the loopback names.
+        assertTrue(u.tls());
+    }
+
+    @Test
+    void loopbackHostsDefaultToPlainHttp() {
+        assertFalse(QuackUri.parse("jdbc:quack://localhost").tls());
+        assertFalse(QuackUri.parse("jdbc:quack://127.0.0.1:9494").tls());
+        assertFalse(QuackUri.parse("jdbc:quack://[::1]:9494").tls());
+        assertEquals("http://[::1]:9494/quack", QuackUri.parse("jdbc:quack://[::1]:9494").httpUri().toString());
+        assertTrue(QuackUri.parse("jdbc:quack://localhost?tls=true").tls());
+        assertFalse(QuackUri.parse("jdbc:quack://duck.example.com?tls=false").tls());
+    }
+
+    @Test
+    void acceptsDuckDbColonSpelling() {
+        QuackUri u = QuackUri.parse("jdbc:quack:localhost:1234/db?token=t");
+        assertEquals("localhost", u.host());
+        assertEquals(1234, u.port());
+        assertEquals("db", u.database().orElseThrow());
+        assertEquals("t", u.token().orElseThrow());
+        assertEquals(9494, QuackUri.parse("jdbc:quack:duck.example.com").port());
+    }
+
+    @Test
+    void sslFingerprintIsNormalizedAndImpliesTls() {
+        String colon = "8A:4A:98:0C:03:14:3D:ED:C5:B8:46:09:E7:70:9E:7B:27:CA:16:BB:60:89:97:2B:AC:DE:68:24:24:0B:78:FB";
+        String hex = colon.replace(":", "");
+        QuackUri u = QuackUri.parse("jdbc:quack://127.0.0.1:9494?sslFingerprint=" + colon);
+        assertTrue(u.tls(), "a pin implies TLS even on loopback");
+        assertEquals(hex, u.sslFingerprint().orElseThrow());
+        assertEquals(hex, QuackUri.parse("jdbc:quack://h?ssl_fingerprint=sha256:" + hex.toLowerCase())
+                .sslFingerprint().orElseThrow());
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h?sslFingerprint=ABCD"));
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h?sslFingerprint=" + hex.replace('A', 'Z')));
+        QuackException e = assertThrows(QuackException.class,
+                () -> QuackUri.parse("jdbc:quack://h?tls=false&sslFingerprint=" + hex));
+        assertTrue(e.getMessage().contains("tls=false"));
+    }
+
+    @Test
+    void clientIdAndHeartbeatTimeout() {
+        QuackUri u = QuackUri.parse("jdbc:quack://h?clientId=dbeaver-1&heartbeatTimeout=15");
+        assertEquals("dbeaver-1", u.clientId().orElseThrow());
+        assertEquals(java.time.Duration.ofSeconds(15), u.heartbeatTimeout());
+        assertEquals(java.time.Duration.ofSeconds(60), QuackUri.parse("jdbc:quack://h").heartbeatTimeout());
+        assertTrue(QuackUri.parse("jdbc:quack://h").clientId().isEmpty());
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h?clientId=abc"));
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h?heartbeatTimeout=0"));
+        assertThrows(QuackException.class, () -> QuackUri.parse("jdbc:quack://h?heartbeatTimeout=PT0.5S"));
     }
 
     @Test

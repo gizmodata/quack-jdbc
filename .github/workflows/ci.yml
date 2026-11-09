@@ -4,40 +4,67 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # Docs-only changes skip CI (tag pushes always run: GitHub does not
+    # apply paths filters to tags).
+    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE', '.gitignore']
   pull_request:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE', '.gitignore']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: write  # required for the github-release job to upload assets
 
+env:
+  # The Quack server the integration tests run against. Pinned: a DuckDB
+  # release changes the protocol's server side.
+  DUCKDB_VERSION: v2.0.0
+
 jobs:
   test:
-    name: Build & test
+    # Unit tests, integration tests against a real DuckDB 2.0 Quack server
+    # (they fail, never skip, when it is missing), the TLS tests, and the
+    # -Poracle parity tests against DuckDB's own JDBC driver. The bytecode
+    # targets Java 17 (--release 17); it is tested on 17 and on the
+    # current LTS.
+    name: Build & test (JDK ${{ matrix.java }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ['17', '25']
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v6
         with:
-          java-version: '17'
+          java-version: ${{ matrix.java }}
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Install DuckDB CLI
+      - name: Install DuckDB CLI ${{ env.DUCKDB_VERSION }}
         run: |
-          curl -sSL https://install.duckdb.org | sh
-          echo "$HOME/.duckdb/cli/latest" >> "$GITHUB_PATH"
-          "$HOME/.duckdb/cli/latest/duckdb" --version
+          set -euo pipefail
+          mkdir -p "$HOME/duckdb-cli"
+          curl -fsSL --retry 3 \
+            "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb-cli-linux-amd64.tar.gz" \
+            | tar -xz -C "$HOME/duckdb-cli"
+          echo "$HOME/duckdb-cli" >> "$GITHUB_PATH"
+          "$HOME/duckdb-cli/duckdb" --version
 
-      - name: Build and run all tests
-        run: mvn --batch-mode --no-transfer-progress verify
+      - name: Build and run all tests (incl. DuckDB JDBC parity)
+        run: mvn --batch-mode --no-transfer-progress -Poracle verify
 
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: surefire-reports
+          name: surefire-reports-jdk${{ matrix.java }}
           path: target/surefire-reports/
 
   publish:
@@ -48,10 +75,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up JDK 17 with Central credentials
-        uses: actions/setup-java@v5
+      - name: Set up JDK 25 with Central credentials
+        uses: actions/setup-java@v6
         with:
-          java-version: '17'
+          java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
           server-id: central
@@ -75,10 +102,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
         with:
-          java-version: '17'
+          java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
 

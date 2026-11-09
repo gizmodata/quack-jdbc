@@ -61,15 +61,21 @@ public final class QuackResultSet extends SkeletalResultSet {
     public boolean next() throws SQLException {
         checkOpen();
         if (exhausted) return false;
-        if (currentChunk == null) {
-            currentChunk = cursor.nextChunk();
-            rowInChunk = 0;
-        } else {
-            rowInChunk++;
-        }
-        while (currentChunk != null && rowInChunk >= currentChunk.rowCount()) {
-            currentChunk = cursor.nextChunk();
-            rowInChunk = 0;
+        try {
+            if (currentChunk == null) {
+                currentChunk = cursor.nextChunk();
+                rowInChunk = 0;
+            } else {
+                rowInChunk++;
+            }
+            while (currentChunk != null && rowInChunk >= currentChunk.rowCount()) {
+                currentChunk = cursor.nextChunk();
+                rowInChunk = 0;
+            }
+        } catch (RuntimeException e) {
+            exhausted = true;
+            currentChunk = null;
+            throw QuackSqlExceptions.from(e);
         }
         if (currentChunk == null) {
             exhausted = true;
