@@ -181,7 +181,9 @@ public final class BinaryReader {
 
     public <T> List<T> readList(ListElementReader<T> reader) {
         int length = readUlebInt();
-        List<T> out = new ArrayList<>(length);
+        // Counts come from the peer. A truncated list should fail on the read,
+        // without allocating the entire claimed size first.
+        List<T> out = new ArrayList<>(Math.min(length, 1024));
         for (int i = 0; i < length; i++) {
             out.add(reader.read(i));
         }
