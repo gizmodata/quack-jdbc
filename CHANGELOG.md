@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `LICENSE` holds only the MIT License text, so GitHub (and the license badge) recognize it as MIT; the attributions that followed it are in `NOTICE`.
+
 ## [1.0.0] - 2026-11-09
 
 The first stable release, for **DuckDB 2.0**. It speaks Quack protocol version 3, the one
