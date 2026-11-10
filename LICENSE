@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-------------------------------------------------------------------------------
-
-This project includes a clean-room Java port of binary codecs originally
-written in TypeScript by Tobi (https://github.com/tobilg/quack-protocol),
-which is also distributed under the MIT License (Copyright (c) 2026 Tobi).

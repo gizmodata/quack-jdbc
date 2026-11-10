@@ -1,0 +1,8 @@
+quack-jdbc
+Copyright (c) 2026 GizmoData LLC
+
+This product is licensed under the MIT License (see the LICENSE file).
+
+This project includes a clean-room Java port of binary codecs originally
+written in TypeScript by Tobi (https://github.com/tobilg/quack-protocol),
+which is also distributed under the MIT License (Copyright (c) 2026 Tobi).
