@@ -44,14 +44,14 @@ CALL quack_serve('quack:127.0.0.1:9494', token => 'my-secret-token');
 <dependency>
     <groupId>com.gizmodata</groupId>
     <artifactId>quack-jdbc</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation "com.gizmodata:quack-jdbc:1.0.0"
+implementation "com.gizmodata:quack-jdbc:1.0.1"
 ```
 
 **Direct jar download** (for DBeaver, DataGrip, or any tool that takes a `.jar`):

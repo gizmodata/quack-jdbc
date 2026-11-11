@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-10
+
 ### Fixed
 
 - A malformed or truncated response can no longer exhaust the JVM's memory through a count it claims. Vector row
