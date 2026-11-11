@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Do not retry a request at another resolved address after a closed HTTP channel: the server may already have accepted the write.
+
 ### Changed
 
 - `LICENSE` holds only the MIT License text, so GitHub (and the license badge) recognize it as MIT; the attributions that followed it are in `NOTICE`.

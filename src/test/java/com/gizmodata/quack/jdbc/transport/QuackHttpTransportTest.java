@@ -10,19 +10,31 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import java.io.IOException;
+import java.net.Authenticator;
+import java.net.CookieHandler;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Regression tests for the address-iteration behavior in
@@ -132,6 +144,22 @@ class QuackHttpTransportTest {
         // Should list at least one literal address that was actually tried.
         assertTrue(msg.contains("127.0.0.1") || msg.contains("0:0:0:0:0:0:0:1"),
                 "expected resolved address in message, got: " + msg);
+    }
+
+    @Test
+    void closedChannelDoesNotReplayAWriteAtAnotherAddress() {
+        ClosedChannelClient client = new ClosedChannelClient();
+        QuackHttpTransport transport = new QuackHttpTransport(
+                URI.create("http://localhost:9494/quack"), client, Duration.ofSeconds(5));
+        assumeTrue(transport.endpointCandidates().length > 1, "requires multiple localhost addresses");
+
+        QuackException error = assertThrows(QuackException.class, () -> transport.send(
+                new QuackMessage.PrepareRequest(MessageHeader.of(MessageType.PREPARE_REQUEST),
+                        "INSERT INTO t VALUES (1)", new com.gizmodata.quack.jdbc.codec.HugeIntParts(1, 0),
+                        java.util.OptionalLong.empty())));
+
+        assertTrue(error.getCause() instanceof ClosedChannelException);
+        assertEquals(1, client.sends.get(), "a closed channel does not prove the write was unaccepted");
     }
 
     @Test
@@ -258,5 +286,39 @@ class QuackHttpTransportTest {
         assertTrue(Arrays.stream(endpoints).allMatch(uri -> uri.getHost() != null));
         assertTrue(Arrays.stream(endpoints).noneMatch(endpoint::equals),
                 "plain HTTP endpoint should still be rewritten to resolved address candidates");
+    }
+
+    private static final class ClosedChannelClient extends HttpClient {
+        private final HttpClient defaults = HttpClient.newHttpClient();
+        private final AtomicInteger sends = new AtomicInteger();
+
+        @Override
+        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler)
+                throws IOException {
+            sends.incrementAndGet();
+            throw new ClosedChannelException();
+        }
+
+        @Override public Optional<CookieHandler> cookieHandler() { return defaults.cookieHandler(); }
+        @Override public Optional<Duration> connectTimeout() { return defaults.connectTimeout(); }
+        @Override public Redirect followRedirects() { return defaults.followRedirects(); }
+        @Override public Optional<ProxySelector> proxy() { return defaults.proxy(); }
+        @Override public SSLContext sslContext() { return defaults.sslContext(); }
+        @Override public SSLParameters sslParameters() { return defaults.sslParameters(); }
+        @Override public Optional<Authenticator> authenticator() { return defaults.authenticator(); }
+        @Override public Version version() { return defaults.version(); }
+        @Override public Optional<Executor> executor() { return defaults.executor(); }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(
+                HttpRequest request, HttpResponse.BodyHandler<T> handler) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
+                HttpResponse.BodyHandler<T> handler, HttpResponse.PushPromiseHandler<T> pushHandler) {
+            throw new UnsupportedOperationException();
+        }
     }
 }
