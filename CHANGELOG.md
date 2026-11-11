@@ -8,6 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Do not retry a request at another resolved address after a closed HTTP channel: the server may already have accepted the write.
 - Reject truncated wire lists without preallocating the full element count claimed by the peer.
 
 ### Changed
