@@ -66,6 +66,22 @@ public class NestedReadEdgeIntegrationTest {
     }
 
     @Test
+    void listLongerThanTheUnbackedRowCapDecodes() throws Exception {
+        // The decoder refuses a vector of more than 2^20 rows unless the
+        // message holds its rows. A long list's child is such a vector; the
+        // real server sends it FLAT, so it must keep decoding.
+        try (Connection c = connect();
+             Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT range(2000000) AS a")) {
+            assertTrue(rs.next());
+            Object[] elements = (Object[]) rs.getArray("a").getArray();
+            assertEquals(2_000_000, elements.length);
+            assertEquals(0L, ((Number) elements[0]).longValue());
+            assertEquals(1_999_999L, ((Number) elements[1_999_999]).longValue());
+        }
+    }
+
+    @Test
     void nestedListWithEmptyInnerDecodes() throws Exception {
         try (Connection c = connect();
              Statement s = c.createStatement();

@@ -8,8 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Do not retry a request at another resolved address after a closed HTTP channel: the server may already have accepted the write.
-- Reject truncated wire lists without preallocating the full element count claimed by the peer.
+- A malformed or truncated response can no longer exhaust the JVM's memory through a count it claims. Vector row
+  counts, LIST entries, ARRAY sizes, list lengths and string lengths are checked against the bytes the message
+  holds before anything is allocated, and a bad one fails as a protocol error instead of `OutOfMemoryError` (a
+  response of a few dozen bytes could do that). A vector may claim more than 1,048,576 rows only when the message
+  carries at least one byte per row, as the FLAT child of a long list does; DuckDB sends CONSTANT and SEQUENCE
+  vectors with at most 2,048.
+- A LIST row whose entry points past its child vector, and an ARRAY vector whose child count overflows, fail as
+  protocol errors instead of an index error.
+- A closed HTTP channel is no longer retried at the next resolved address, since it does not show whether the
+  server took the request. The JDK's HTTP client never reports a failure that way (it wraps it in an `IOException`,
+  which was already not retried), so no request was replayed in practice; only a custom `HttpClient` passed to
+  `QuackHttpTransport` could reach it.
 
 ### Changed
 
