@@ -48,6 +48,24 @@ public final class VectorCodec {
     private VectorCodec() {
     }
 
+    /**
+     * The most rows a vector may claim when the message does not hold at
+     * least one byte per row. Row counts come from the peer, and CONSTANT and
+     * SEQUENCE vectors expand to {@code count} rows from a few bytes, so an
+     * unchecked count sizes an allocation of the peer's choosing. DuckDB sends
+     * such vectors with at most its vector size (2048) rows; only FLAT
+     * children of nested types grow larger, and those carry their rows on the
+     * wire.
+     */
+    static final int MAX_UNBACKED_VECTOR_ROWS = 1 << 20;
+
+    private static void checkRowCount(BinaryReader reader, int count, String what) {
+        if (count > MAX_UNBACKED_VECTOR_ROWS && count > reader.remaining()) {
+            throw new QuackProtocolException(what + " claims " + count + " rows, but only "
+                    + reader.remaining() + " byte(s) of the message remain");
+        }
+    }
+
     public static DataChunk decodeDataChunkWrapper(BinaryReader reader) {
         return reader.readObject(() ->
                 reader.readRequiredField(300, () -> decodeDataChunk(reader)));
@@ -56,6 +74,7 @@ public final class VectorCodec {
     public static DataChunk decodeDataChunk(BinaryReader reader) {
         return reader.readObject(() -> {
             int rowCount = reader.readRequiredField(100, reader::readUlebInt);
+            checkRowCount(reader, rowCount, "DataChunk");
             List<LogicalType> types = reader.readRequiredField(101,
                     () -> reader.readList(i -> LogicalTypeCodec.decode(reader)));
             List<DecodedVector> columns = reader.readRequiredField(102,
@@ -80,6 +99,7 @@ public final class VectorCodec {
     }
 
     private static DecodedVector decodeVectorBody(BinaryReader reader, LogicalType type, int count) {
+        checkRowCount(reader, count, "Vector");
         int vectorTypeId = reader.readOptionalField(90, reader::readUlebInt, VectorType.FLAT.wireId());
         VectorType vectorType = VectorType.fromWireId(vectorTypeId);
         return switch (vectorType) {
@@ -325,7 +345,7 @@ public final class VectorCodec {
         PhysicalType physicalType = PhysicalTypeUtil.getPhysicalType(type);
 
         if (physicalType.isConstantSize()) {
-            int byteLength = physicalType.byteWidth() * count;
+            long byteLength = (long) physicalType.byteWidth() * count;
             byte[] bytes = reader.readRequiredField(102, reader::readBlob);
             if (bytes.length != byteLength) {
                 throw new QuackProtocolException(
@@ -384,6 +404,11 @@ public final class VectorCodec {
                         continue;
                     }
                     ListEntry e = entries.get(row);
+                    if ((long) e.offset + e.length > childVector.size()) {
+                        throw new QuackProtocolException("LIST row " + row + " spans child elements "
+                                + e.offset + " to " + ((long) e.offset + e.length) + ", but the child vector has "
+                                + childVector.size());
+                    }
                     List<Object> slice = new ArrayList<>(e.length);
                     for (int k = 0; k < e.length; k++) {
                         slice.add(childVector.getObject(e.offset + k));
@@ -399,9 +424,14 @@ public final class VectorCodec {
                     throw new QuackProtocolException("ARRAY vector serialized size " + arraySize
                             + ", expected " + expected);
                 }
+                long childCount = (long) arraySize * count;
+                if (childCount > Integer.MAX_VALUE) {
+                    throw new QuackProtocolException("ARRAY vector of " + count + " rows of size "
+                            + arraySize + " has more child elements than a vector can hold");
+                }
                 LogicalType childType = PhysicalTypeUtil.getChildType(type);
                 DecodedVector childVector = reader.readRequiredField(104,
-                        () -> decodeVector(reader, childType, arraySize * count));
+                        () -> decodeVector(reader, childType, (int) childCount));
                 Object[] values = new Object[count];
                 for (int row = 0; row < count; row++) {
                     if (!Validity.isValid(validity, row)) {
@@ -712,7 +742,7 @@ public final class VectorCodec {
     }
 
     private static int[] readSelectionVector(BinaryReader reader, int count) {
-        int expectedBytes = count * 4;
+        long expectedBytes = 4L * count;
         byte[] bytes = reader.readBlob();
         if (bytes.length != expectedBytes) {
             throw new QuackProtocolException("Selection vector has " + bytes.length

@@ -98,6 +98,10 @@ cross-reference DuckDB's `src/main/java/org/duckdb/DuckDBDatabaseMetaData.java`.
 - No emoji in code, javadocs, or commit messages.
 - Throw `SQLFeatureNotSupportedException` for unimplemented JDBC surface
   (see the `Skeletal*` base classes).
+- Every count the decoder reads comes from the peer. One that sizes an
+  allocation must first be checked against the bytes the message holds
+  (`VectorCodec.checkRowCount`, `BinaryReader.ensure`), with `long` arithmetic
+  for products, and gets a rejected case in `VectorCountBoundsTest`.
 - DBeaver compatibility is a hard requirement — when changing
   `QuackDatabaseMetaData`, verify against DuckDB's reference before
   diverging.

@@ -265,7 +265,8 @@ public final class BinaryReader {
     }
 
     private void ensure(int length) {
-        if (offset + length > bytes.length) {
+        // Compared this way round so a huge peer-supplied length cannot overflow.
+        if (length > bytes.length - offset) {
             throw new QuackProtocolException("Unexpected end of input at offset " + offset
                     + "; needed " + length + " byte(s), have " + remaining());
         }
